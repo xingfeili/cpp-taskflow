@@ -4,6 +4,7 @@
 #include <experimental/filesystem>
 #include <fstream>
 #include <random>
+#include <taskflow/taskflow.hpp>
 
 #define EIGEN_DONT_PARALLELIZE 1
 
@@ -11,7 +12,7 @@
 
 // Function: read_mnist_label
 inline auto read_mnist_label(const std::experimental::filesystem::path& path) {
-  
+
   // Helper lambda.
   auto reverse_int = [](int i) {
     unsigned char c1, c2, c3, c4;
@@ -21,10 +22,10 @@ inline auto read_mnist_label(const std::experimental::filesystem::path& path) {
     c4 = (i >> 24) & 255;
     return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
   };
-  
+
   // Read the image.
   std::ifstream ifs(path, std::ios::binary);
-  
+
   if(!ifs) {
     assert(false);
   }
@@ -37,7 +38,7 @@ inline auto read_mnist_label(const std::experimental::filesystem::path& path) {
 
   ifs.read((char*)&num_imgs, sizeof(num_imgs));
   num_imgs = reverse_int(num_imgs);
-  
+
   Eigen::VectorXi labels(num_imgs);
   for (int i = 0; i<num_imgs; ++i) {
     unsigned char temp = 0;  // must use unsigned
@@ -49,7 +50,7 @@ inline auto read_mnist_label(const std::experimental::filesystem::path& path) {
 
 
 inline auto read_mnist_image(const std::experimental::filesystem::path& path) {
-  
+
   // Helper lambda.
   auto reverse_int = [] (int i) {
     unsigned char c1, c2, c3, c4;
@@ -59,7 +60,7 @@ inline auto read_mnist_image(const std::experimental::filesystem::path& path) {
     c4 = (i >> 24) & 255;
     return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
   };
-  
+
   // Read the image.
   std::ifstream ifs(path, std::ios::binary);
 
@@ -83,7 +84,7 @@ inline auto read_mnist_image(const std::experimental::filesystem::path& path) {
 
   ifs.read((char*)&num_cols, sizeof(num_cols));
   num_cols = reverse_int(num_cols);
- 
+
   Eigen::MatrixXf images(num_imgs, num_rows*num_cols);
 
   for(int i = 0; i < num_imgs; ++i) {
@@ -105,7 +106,7 @@ inline auto read_mnist_image(const std::experimental::filesystem::path& path) {
 }
 
 inline auto time_diff(
-  std::chrono::time_point<std::chrono::high_resolution_clock> &t1, 
+  std::chrono::time_point<std::chrono::high_resolution_clock> &t1,
   std::chrono::time_point<std::chrono::high_resolution_clock> &t2
 ) {
   return std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
@@ -133,8 +134,8 @@ inline void relu(Eigen::MatrixXf& x) {
     for(int i=0; i<x.rows(); ++i) {
       if(x(i, j) <= 0.0f) {
         x(i, j) = 0.0f;
-      }   
-    }   
+      }
+    }
   }
 }
 
@@ -163,7 +164,7 @@ inline void dsigmoid(Eigen::MatrixXf& x) {
 
 inline void deactivate(Eigen::MatrixXf& mat, Activation act) {
   switch(act) {
-    case Activation::NONE:    mat = Eigen::MatrixXf::Ones(mat.rows(), mat.cols()); return; 
+    case Activation::NONE:    mat = Eigen::MatrixXf::Ones(mat.rows(), mat.cols()); return;
     case Activation::SIGMOID: dsigmoid(mat); return ;
     case Activation::RELU:    drelu(mat); return;
   };
@@ -173,10 +174,10 @@ struct MNIST {
 
   // Ctor
   MNIST() {
-    std::string path = std::experimental::filesystem::current_path();                                                                  
-    path = path.substr(0, path.rfind("cpp-taskflow") + 12);
+    std::string path = std::experimental::filesystem::current_path();
+    path = path.substr(0, path.rfind("taskflow") + 8);
     path += "/benchmarks/mnist/";
-    
+
     images = read_mnist_image(path + "./train-images.data");
     labels = read_mnist_label(path + "./train-labels.data");
 
@@ -224,7 +225,7 @@ struct MNIST {
 
   void update(size_t layer) {
     Ws[layer] -= lrate*(dW[layer] + decay*Ws[layer]);
-    Bs[layer] -= lrate*(dB[layer] + decay*Bs[layer]); 
+    Bs[layer] -= lrate*(dB[layer] + decay*Bs[layer]);
   }
 
   void shuffle(Eigen::MatrixXf& mat, Eigen::VectorXi& vec, const size_t row_num) {
@@ -240,7 +241,7 @@ struct MNIST {
   }
 
   void validate() {
-    Eigen::MatrixXf res = test_images; 
+    Eigen::MatrixXf res = test_images;
     auto t1 = std::chrono::high_resolution_clock::now();
     for(size_t i=0; i<acts.size(); i++) {
       res = res * Ws[i] + Bs[i].replicate(res.rows(), 1);
@@ -256,7 +257,7 @@ struct MNIST {
 
     size_t correct_num {0};
     for(int k=0; k<res.rows(); k++) {
-      int pred ; 
+      int pred ;
       res.row(k).maxCoeff(&pred);
       if(pred == test_labels[k]) {
         correct_num ++;
@@ -308,8 +309,8 @@ struct MNIST {
 };
 
 
-inline void forward_task(MNIST& D, size_t iter, size_t e, 
-  std::vector<Eigen::MatrixXf>& mats, 
+inline void forward_task(MNIST& D, size_t iter, size_t e,
+  std::vector<Eigen::MatrixXf>& mats,
   std::vector<Eigen::VectorXi>& vecs) {
   if(iter != 0) {
     D.beg_row += D.batch_size;
@@ -331,7 +332,7 @@ inline void forward_task(MNIST& D, size_t iter, size_t e,
 
 inline void backward_task(MNIST& D, size_t i, size_t e, std::vector<Eigen::MatrixXf>& mats) {
   if(i > 0) {
-    D.backward(i, D.Ys[i-1].transpose());       
+    D.backward(i, D.Ys[i-1].transpose());
   }
   else {
     D.backward(i, mats[e].middleRows(D.beg_row, D.batch_size).transpose());
@@ -346,12 +347,12 @@ inline auto build_dnn(unsigned epoch) {
   dnn.add_layer(64, 32, Activation::RELU);
   dnn.add_layer(32, 16, Activation::RELU);
   dnn.add_layer(16, 8, Activation::RELU);
-  dnn.add_layer(8, 10, Activation::NONE); 
+  dnn.add_layer(8, 10, Activation::NONE);
   return dnn;
 }
 
 void run_tbb(MNIST&, unsigned);
-void run_taskflow(MNIST&, unsigned);
+void run_taskflow(MNIST&, tf::Executor&);
 void run_omp(MNIST&, unsigned);
 void run_sequential(MNIST&, unsigned);
 

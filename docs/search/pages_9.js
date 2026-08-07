@@ -1,5 +1,4 @@
 var searchData=
 [
-  ['standard_20cell_20placement',['Standard Cell Placement',['../dreamplace.html',1,'usecases']]],
-  ['static_20timing_20analysis',['Static Timing Analysis',['../opentimer.html',1,'usecases']]]
+  ['9_200_202025_2001_2002_0',['Release 3.9.0 (2025/01/02)',['../release-3-9-0.html',1,'Releases']]]
 ];

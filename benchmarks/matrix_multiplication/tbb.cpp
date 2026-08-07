@@ -1,74 +1,73 @@
 #include "matrix_multiplication.hpp"
-#include <tbb/tbb.h>
-#include <tbb/task_scheduler_init.h>
+#include <tbb/global_control.h>
+#include <tbb/flow_graph.h>
+#include <tbb/parallel_for.h>
 
 // matrix_multiplication_tbb
 void matrix_multiplication_tbb(unsigned num_threads) {
 
   using namespace tbb;
   using namespace tbb::flow;
- 
-  tbb::task_scheduler_init init(num_threads);
-  tbb::flow::graph G;
 
-  std::vector<std::unique_ptr<continue_node<continue_msg>>> tasks;
-  tasks.resize(4*N);
+  graph g;
 
-  int i=0;
+  tbb::global_control control(
+    tbb::global_control::max_allowed_parallelism, num_threads
+  );
+  
+  // create the source node
+  continue_node<continue_msg> src(g, [&](const continue_msg&) {
+  });
 
-  auto sync = std::make_unique<continue_node<continue_msg>>(G, [](const continue_msg&){});
-  for(; i<N ; i++) {
-    tasks[i] = std::make_unique<continue_node<continue_msg>>(G, 
-      [=, i=i](const continue_msg&){
-        for(int j=0; j<N; ++j) {
-          a[i][j] = i + j;
+  // Create flow graph nodes
+  continue_node<continue_msg> node1(g, [&](const continue_msg&) {
+    tbb::parallel_for(0, N, 1, [=](int i){
+      for(int j=0; j<N; ++j) {
+        a[i][j] = i + j;
+      }
+    });
+  });
+
+  continue_node<continue_msg> node2(g, [&](const continue_msg&) { 
+    tbb::parallel_for(0, N, 1, [=](int i){
+      for(int j=0; j<N; ++j) {
+        b[i][j] = i * j;
+      }
+    });
+  });
+
+  continue_node<continue_msg> node3(g, [&](const continue_msg&) {
+    tbb::parallel_for(0, N, 1, [=](int i){
+      for(int j=0; j<N; ++j) {
+        c[i][j] = 0;
+      }
+    });
+  });
+
+  // Final node to sync all previous tasks
+  continue_node<continue_msg> final_node(g, [&](const continue_msg&) {
+    tbb::parallel_for(0, N, 1, [=](int i){
+      for(int j=0; j<N; ++j) {
+        for(int k=0; k<N; k++) {
+          c[i][j] += a[i][k] * b[k][j];
         }
       }
-    );
-    make_edge(*tasks[i], *sync);
-  }
+    });
+  });
 
-  for(; i<2*N ; i++) {
-    tasks[i] = std::make_unique<continue_node<continue_msg>>(G, 
-      [=, i=i-N](const continue_msg&){
-        for(int j=0; j<N; ++j) {
-          b[i][j] = i * j;
-        }
-      }
-    );
-    make_edge(*tasks[i], *sync);
-  }
+  // Connect dependencies (final_node depends on node1, node2, and node3)
+  make_edge(src, node1);
+  make_edge(src, node2);
+  make_edge(src, node3);
+  make_edge(node1, final_node);
+  make_edge(node2, final_node);
+  make_edge(node3, final_node);
 
-  for(; i<3*N ; i++) {
-    tasks[i] = std::make_unique<continue_node<continue_msg>>(G, 
-      [=, i=i-2*N](const continue_msg&){
-        for(int j=0; j<N; ++j) {
-          c[i][j] = 0;
-        }
-      }
-    );
-    make_edge(*tasks[i], *sync);
-  }
+  // Trigger the first three tasks in parallel
+  src.try_put(continue_msg());
 
-  for(; i<4*N ; i++) {
-    tasks[i] = std::make_unique<continue_node<continue_msg>>(G, 
-      [=, i=i-3*N](const continue_msg&){ 
-        for(int j=0; j<N; ++j) {
-          for(int k=0; k<N; ++k) {
-            c[i][j] += a[i][k] * b[k][j];
-          }
-        }
-      }
-    );
-    make_edge(*sync, *tasks[i]);
-  }
-
-  for(auto j=0; j<3*N; j++) {
-    tasks[j]->try_put(continue_msg());
-  }
-  G.wait_for_all();
-
-  //std::cout << reduce_sum() << std::endl;
+  // Wait for everything to finish
+  g.wait_for_all();
 }
 
 std::chrono::microseconds measure_time_tbb(unsigned num_threads) {

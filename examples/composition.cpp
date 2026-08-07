@@ -1,11 +1,9 @@
-// 2019/03/12 - created by Chun-Xun Lin
-//  - added an example showing how to use framework decomposition
-
-#include <taskflow/taskflow.hpp>  // the only include you need
+// This example shows how to compose a taskflow
+#include <taskflow/taskflow.hpp>
 
 void composition_example_1() {
 
-  std::cout << "Composition example 1\n"; 
+  std::cout << "Composition example 1\n";
 
   tf::Executor executor;
 
@@ -22,7 +20,7 @@ void composition_example_1() {
 
   // f2A ---
   //        |----> f2C ----> f1_module_task ----> f2D
-  // f2B --- 
+  // f2B ---
   tf::Taskflow f2("F2");
   auto f2A = f2.emplace([](){ std::cout << "  F2 TaskA\n"; });
   auto f2B = f2.emplace([](){ std::cout << "  F2 TaskB\n"; });
@@ -35,7 +33,7 @@ void composition_example_1() {
 
   f2A.precede(f2C);
   f2B.precede(f2C);
-  
+
   tf::Task f1_module_task = f2.composed_of(f1);
   f1_module_task.name("module");
   f2C.precede(f1_module_task);
@@ -48,7 +46,7 @@ void composition_example_1() {
 
 void composition_example_2() {
 
-  std::cout << "Composition example 2\n"; 
+  std::cout << "Composition example 2\n";
 
   tf::Executor executor;
 
@@ -61,7 +59,7 @@ void composition_example_2() {
 
   //  f2A ---
   //         |----> f2C
-  //  f2B --- 
+  //  f2B ---
   //
   //  f1_module_task
   tf::Taskflow f2("F2");
@@ -74,31 +72,39 @@ void composition_example_2() {
 
   f2A.precede(f2C);
   f2B.precede(f2C);
-  f2.composed_of(f1);
+  f2.composed_of(f1).name("module_of_f1");
 
   // f3 has a module task (f2) and a regular task
   tf::Taskflow f3("F3");
-  f3.composed_of(f2);
+  f3.composed_of(f2).name("module_of_f2");
   f3.emplace([](){ std::cout << "      F3 TaskA\n"; }).name("f3A");
 
   // f4: f3_module_task -> f2_module_task
-  tf::Taskflow f4; 
+  tf::Taskflow f4;
   f4.name("F4");
-  auto f3_module_task = f4.composed_of(f3);
-  auto f2_module_task = f4.composed_of(f2);
+  auto f3_module_task = f4.composed_of(f3).name("module_of_f3");
+  auto f2_module_task = f4.composed_of(f2).name("module_of_f2");
   f3_module_task.precede(f2_module_task);
 
   f4.dump(std::cout);
 
-  executor.run_until(f4, [iter = 1] () mutable { std::cout << '\n'; return iter-- == 0; }, [](){ 
-    std::cout << "First run_until finished\n"; 
-  }).get();
-  executor.run_until(f4, [iter = 2] () mutable { std::cout << '\n'; return iter-- == 0; }, [](){
-    std::cout << "Second run_until finished\n"; 
-  });
-  executor.run_until(f4, [iter = 3] () mutable { std::cout << '\n'; return iter-- == 0; }, [](){
-    std::cout << "Third run_until finished\n"; 
-  }).get();
+  executor.run_until(
+    f4,
+    [iter = 1] () mutable { std::cout << '\n'; return iter-- == 0; },
+    [](){ std::cout << "First run_until finished\n"; }
+  ).get();
+
+  executor.run_until(
+    f4,
+    [iter = 2] () mutable { std::cout << '\n'; return iter-- == 0; },
+    [](){ std::cout << "Second run_until finished\n"; }
+  );
+
+  executor.run_until(
+    f4,
+    [iter = 3] () mutable { std::cout << '\n'; return iter-- == 0; },
+    [](){ std::cout << "Third run_until finished\n"; }
+  ).get();
 }
 
 int main(){

@@ -1,8 +1,15 @@
 // A simple example to capture the following task dependencies.
 //
-// TaskA---->TaskB---->TaskD
-// TaskA---->TaskC---->TaskD
-
+//           +---+
+//     +---->| B |-----+
+//     |     +---+     |
+//   +---+           +-v-+
+//   | A |           | D |
+//   +---+           +-^-+
+//     |     +---+     |
+//     +---->| C |-----+
+//           +---+
+//
 #include <taskflow/taskflow.hpp>  // the only include you need
 
 int main(){
@@ -10,20 +17,17 @@ int main(){
   tf::Executor executor;
   tf::Taskflow taskflow("simple");
 
-  auto A = taskflow.emplace([]() { std::cout << "TaskA\n"; });
-  auto B = taskflow.emplace([]() { std::cout << "TaskB\n"; });
-  auto C = taskflow.emplace([]() { std::cout << "TaskC\n"; });
-  auto D = taskflow.emplace([]() { std::cout << "TaskD\n"; });
+  auto A = taskflow.emplace([](){ std::cout << "TaskA\n"; }).name("A");
+  auto B = taskflow.emplace([](){ std::cout << "TaskB\n"; }).name("B");
+  auto C = taskflow.emplace([](){ std::cout << "TaskC\n"; }).name("C");
+  auto D = taskflow.emplace([](){ std::cout << "TaskD\n"; }).name("D");
 
-  A.precede(B);  // B runs after A  //          +---+                  
-  A.precede(C);  // C runs after A  //    +---->| B |-----+            
-  B.precede(D);  // D runs after B  //    |     +---+     |            
-  C.precede(D);  // D runs after C  //  +---+           +-v-+          
-                                    //  | A |           | D |          
-                                    //  +---+           +-^-+          
-  executor.run(taskflow).wait();    //    |     +---+     |            
-                                    //    +---->| C |-----+            
-                                    //          +---+
+  A.precede(B, C);  // A runs before B and C
+  D.succeed(B, C);  // D runs after  B and C
+
+  executor.run(taskflow).wait();
+  
+  taskflow.dump(std::cout);  // dump the graph to a DOT format via standard output
 
   return 0;
 }

@@ -1,23 +1,30 @@
 #include "matrix.hpp"
 #include <CLI11.hpp>
 
+int M = 0;
+int N = 0;
+int B = 0;
+int MB = 0;
+int NB = 0;
+double **matrix = nullptr;
+
 void wavefront(
   const std::string& model,
-  const unsigned num_threads, 
+  const unsigned num_threads,
   const unsigned num_rounds
   ) {
 
   std::cout << std::setw(12) << "size"
             << std::setw(12) << "runtime"
             << std::endl;
-  
-  for(int S=32; S<=4096; S += 128) {
+
+  for(int S=8; S<= (1<<14); S <<= 1) {
 
     M = N = S;
     B = 8;
     MB = (M/B) + (M%B>0);
     NB = (N/B) + (N%B>0);
-  
+
     double runtime {0.0};
 
     init_matrix();
@@ -36,7 +43,7 @@ void wavefront(
     }
 
     destroy_matrix();
-    
+
     std::cout << std::setw(12) << MB*NB
               << std::setw(12) << runtime / num_rounds / 1e3
               << std::endl;
@@ -47,10 +54,10 @@ int main(int argc, char* argv[]) {
 
   CLI::App app{"Wavefront"};
 
-  unsigned num_threads {1}; 
+  unsigned num_threads {1};
   app.add_option("-t,--num_threads", num_threads, "number of threads (default=1)");
 
-  unsigned num_rounds {1};  
+  unsigned num_rounds {1};
   app.add_option("-r,--num_rounds", num_rounds, "number of rounds (default=1)");
 
   std::string model = "tf";
@@ -63,7 +70,7 @@ int main(int argc, char* argv[]) {
      });
 
   CLI11_PARSE(app, argc, argv);
-   
+
   std::cout << "model=" << model << ' '
             << "num_threads=" << num_threads << ' '
             << "num_rounds=" << num_rounds << ' '

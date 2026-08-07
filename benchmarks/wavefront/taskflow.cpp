@@ -1,10 +1,9 @@
 #include "matrix.hpp"
-#include <taskflow/taskflow.hpp> 
+#include <taskflow/taskflow.hpp>
 
 // wavefront computing
-void wavefront_taskflow(unsigned num_threads) {
-  
-  tf::Executor executor(num_threads);
+void wavefront_taskflow(tf::Executor& executor) {
+
   tf::Taskflow taskflow;
 
   std::vector<std::vector<tf::Task>> node(MB);
@@ -14,7 +13,7 @@ void wavefront_taskflow(unsigned num_threads) {
       n.emplace_back(taskflow.placeholder());
     }
   }
-  
+
   matrix[M-1][N-1] = 0;
   for( int i=MB; --i>=0; ) {
     for( int j=NB; --j>=0; ) {
@@ -33,8 +32,9 @@ void wavefront_taskflow(unsigned num_threads) {
 }
 
 std::chrono::microseconds measure_time_taskflow(unsigned num_threads) {
+  static tf::Executor executor(num_threads);
   auto beg = std::chrono::high_resolution_clock::now();
-  wavefront_taskflow(num_threads);
+  wavefront_taskflow(executor);
   auto end = std::chrono::high_resolution_clock::now();
   return std::chrono::duration_cast<std::chrono::microseconds>(end - beg);
 }

@@ -1,7 +1,5 @@
 var searchData=
 [
-  ['jmp_5fbuf',['jmp_buf',['http://en.cppreference.com/w/cpp/utility/program/jmp_buf.html',1,'std']]],
-  ['join',['join',['http://en.cppreference.com/w/cpp/thread/thread/join.html',1,'std::thread::join()'],['../classtf_1_1Subflow.html#a59fcac1323e70d920088dd37bd0be245',1,'tf::Subflow::join()']]],
-  ['joinable',['joinable',['http://en.cppreference.com/w/cpp/thread/thread/joinable.html',1,'std::thread']]],
-  ['joined',['joined',['../classtf_1_1Subflow.html#afb178f1e81f2d37652803023da5847ce',1,'tf::Subflow']]]
+  ['9_200_202025_2001_2002_0',['Release 3.9.0 (2025/01/02)',['../release-3-9-0.html',1,'Releases']]],
+  ['98_2011_2014_2017_1',['Q6: Does Taskflow have backward compatibility with C++03/98/11/14/17?',['../FAQ.html#GeneralQuestion6',1,'']]]
 ];

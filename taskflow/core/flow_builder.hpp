@@ -1,350 +1,1774 @@
 #pragma once
 
 #include "task.hpp"
+#include "../algorithm/partitioner.hpp"
+
+/**
+@file flow_builder.hpp
+@brief flow builder include file
+*/
 
 namespace tf {
 
-/** 
+// ------------------------------------------------------------------------------------------------
+// Concept
+// ------------------------------------------------------------------------------------------------
+
+/**
+@brief concept to check if a unary operation is valid
+
+@tparam C Callable type.
+@tparam B Input iterator-like type.
+
+Satisfied by a callable that can be invoked with the value obtained from
+dereferencing an input-like iterator.
+Specifically, the following expression must be valid:
+
+@code{.cpp}
+c(*b);
+@endcode
+*/
+template <typename C, typename B>
+concept UnaryOperationLike =
+requires(C c, B b) {
+  c(*b);
+};
+
+/**
+@brief concept to check if a binary operation is valid
+
+@tparam C Callable type.
+@tparam B1 First input iterator-like type.
+@tparam B2 Second input iterator-like type.
+
+Satisfied by a callable that can be invoked with values obtained from
+dereferencing two input-like iterators.
+Specifically, the following expression must be valid:
+
+@code{.cpp}
+c(*b1, *b2);
+@endcode
+*/
+template <typename C, typename B1, typename B2>
+concept BinaryOperationLike =
+requires(C c, B1 b1, B2 b2) {
+  c(*b1, *b2);
+};
+
+/**
+@brief concept to check if a unary transformation operation is valid
+
+@tparam C Callable type.
+@tparam B Input iterator type.
+@tparam O Output iterator type.
+
+Satisfied by a callable that accepts the value referenced by an input
+iterator and produces a result assignable through an output iterator.
+Specifically, the following expression must be valid:
+
+@code{.cpp}
+*o = c(*b);
+@endcode
+*/
+template <typename C, typename B, typename O>
+concept UnaryTransformLike =
+requires(C c, B b, O o) {
+  *o = c(*b);
+};
+
+/**
+@brief concept to check if a binary transformation operation is valid
+
+@tparam C Callable type.
+@tparam B1 First input iterator type.
+@tparam B2 Second input iterator type.
+@tparam O Output iterator type.
+
+Satisfied by a callable that accepts the values referenced by two input
+iterators and produces a result assignable through an output iterator.
+Specifically, the following expression must be valid:
+
+@code
+*o = c(*b1, *b2);
+@endcode
+*/
+template <typename C, typename B1, typename B2, typename O>
+concept BinaryTransformLike =
+requires(C c, B1 b1, B2 b2, O o) {
+  *o = c(*b1, *b2);
+};
+
+// ------------------------------------------------------------------------------------------------
+// FlowBuilder
+// ------------------------------------------------------------------------------------------------
+
+/**
 @class FlowBuilder
 
-@brief building methods of a task dependency graph
+@brief class to build a task dependency graph
+
+The class provides essential methods to construct a task dependency graph
+from which tf::Taskflow and tf::Subflow are derived.
 
 */
 class FlowBuilder {
 
-  friend class Task;
+  friend class Executor;
 
   public:
-    
-    /**
-    @brief constructs a flow builder object
 
-    @param graph a task dependency graph to manipulate
-    */
-    FlowBuilder(Graph& graph);
-    
-    /**
-    @brief creates a static task from a given callable object
-    
-    @tparam C callable type
-    
-    @param callable a callable object constructible from std::function<void()>
+  /**
+  @brief constructs a flow builder with a graph
+  */
+  FlowBuilder(Graph& graph);
 
-    @return Task handle
-    */
-    template <typename C>
-    std::enable_if_t<is_static_task_v<C>, Task> emplace(C&& callable);
+  /**
+  @brief creates a static task
 
-    /**
-    @brief creates a dynamic task from a given callable object
-    
-    @tparam C callable type
-    
-    @param callable a callable object constructible from std::function<void(Subflow&)>
+  @tparam C callable type satisfying tf::StaticTaskLike
 
-    @return Task handle
-    */
-    template <typename C>
-    std::enable_if_t<is_dynamic_task_v<C>, Task> emplace(C&& callable);
+  @param callable callable to construct a static task
 
-    /**
-    @brief creates a condition task from a given callable object
-    
-    @tparam C callable type
-    
-    @param callable a callable object constructible from std::function<int()>
+  @return a tf::Task handle
 
-    @return Task handle
-    */
-    template <typename C>
-    std::enable_if_t<is_condition_task_v<C>, Task> emplace(C&& callable);
+  The following example creates a static task.
 
-#ifdef TF_ENABLE_CUDA
-    /**
-    @brief creates a cudaflow task from a given callable object
-    
-    @tparam C callable type
-    
-    @param callable a callable object constructible from std::function<void(cudaFlow&)>
+  @code{.cpp}
+  tf::Task static_task = taskflow.emplace([](){});
+  @endcode
+  
+  @note
+  Please refer to @ref StaticTasking for details.
+  */
+  template <StaticTaskLike C>
+  Task emplace(C&& callable);
+  
+  /**
+  @brief creates a runtime task
 
-    @return Task handle
-    */
-    template <typename C>
-    std::enable_if_t<is_cudaflow_task_v<C>, Task> emplace(C&& callable);
-#endif 
+  @tparam C callable type satisfying tf::RuntimeTaskLike
 
-    /**
-    @brief creates multiple tasks from a list of callable objects
-    
-    @tparam C... callable types
+  @param callable callable to construct a runtime task
 
-    @param callables one or multiple callable objects constructible from each task category
+  @return a tf::Task handle
 
-    @return a Task handle
-    */
-    template <typename... C, std::enable_if_t<(sizeof...(C)>1), void>* = nullptr>
-    auto emplace(C&&... callables);
+  The following example creates a runtime task.
 
-    /**
-    @brief creates a module task from a taskflow
+  @code{.cpp}
+  tf::Task static_task = taskflow.emplace([](tf::Runtime&){});
+  @endcode
 
-    @param taskflow a taskflow object for the module
-    @return a Task handle
-    */
-    Task composed_of(Taskflow& taskflow);
-    
-    /**
-    @brief constructs a task dependency graph of range-based parallel_for
-    
-    The task dependency graph applies the callable object
-    @p callable to each object obtained by dereferencing
-    every iterator in the range [beg, end). The range
-    is split into chunks of size @p chunk, where each of them
-    is processed by one Task.
+  @note
+  Please refer to @ref RuntimeTasking for details.
+  */
+  template <RuntimeTaskLike C>
+  Task emplace(C&& callable);
 
-    The callable needs to accept a single argument, the object in the range.
+  /**
+  @brief creates a dynamic task
 
-    @tparam I input iterator type
-    @tparam C callable type
+  @tparam C callable type satisfying tf::SubflowTaskLike
 
-    @param beg iterator to the beginning (inclusive)
-    @param end iterator to the end (exclusive)
-    @param callable a callable object to be applied to 
-    @param chunk size (default 1)
+  @param callable callable to construct a dynamic task
 
-    @return a pair of Task handles to the beginning and the end of the graph
-    */
-    template <typename I, typename C>
-    std::pair<Task, Task> parallel_for(I beg, I end, C&& callable, size_t chunk=1);
-    
-    /**
-    @brief constructs a task dependency graph of integer index-based parallel_for
-    
-    The task dependency graph applies a callable object to every index 
-    in the range [beg, end) with a step size chunk by chunk.
+  @return a tf::Task handle
 
-    @tparam I integer (arithmetic) index type
-    @tparam C callable type
+  The following example creates a dynamic task (tf::Subflow)
+  that spawns two static tasks.
 
-    @param beg index of the beginning (inclusive)
-    @param end index of the end (exclusive)
-    @param step step size 
-    @param callable a callable object to be applied to
-    @param chunk items per task
+  @code{.cpp}
+  tf::Task dynamic_task = taskflow.emplace([](tf::Subflow& sf){
+    tf::Task static_task1 = sf.emplace([](){});
+    tf::Task static_task2 = sf.emplace([](){});
+  });
+  @endcode
 
-    @return a pair of Task handles to the beginning and the end of the graph
-    */
-    template <
-      typename I, 
-      typename C, 
-      std::enable_if_t<std::is_integral<std::decay_t<I>>::value, void>* = nullptr
-    >
-    std::pair<Task, Task> parallel_for(
-      I beg, I end, I step, C&& callable, size_t chunk = 1
-    );
+  @note
+  Please refer to @ref SubflowTasking for details.
+  */
+  template <SubflowTaskLike C>
+  Task emplace(C&& callable);
 
-    /**
-    @brief constructs a task dependency graph of floating index-based parallel_for
-    
-    The task dependency graph applies a callable object to every index 
-    in the range [beg, end) with a step size chunk by chunk.
+  /**
+  @brief creates a condition task
 
-    @tparam I floating (arithmetic) index type
-    @tparam C callable type
+  @tparam C callable type satisfying tf::ConditionTaskLike
 
-    @param beg index of the beginning (inclusive)
-    @param end index of the end (exclusive)
-    @param step step size 
-    @param callable a callable object to be applied to
-    @param chunk items per task
+  @param callable callable to construct a condition task
 
-    @return a pair of Task handles to the beginning and the end of the graph
-    */
-    template <
-      typename I, 
-      typename C, 
-      std::enable_if_t<std::is_floating_point<std::decay_t<I>>::value, void>* = nullptr
-    >
-    std::pair<Task, Task> parallel_for(
-      I beg, I end, I step, C&& callable, size_t chunk = 1
-    );
+  @return a tf::Task handle
+
+  The following example creates an if-else block using one condition task
+  and three static tasks.
+
+  @code{.cpp}
+  tf::Taskflow taskflow;
+
+  auto [init, cond, yes, no] = taskflow.emplace(
+    [] () { },
+    [] () { return 0; },
+    [] () { std::cout << "yes\n"; },
+    [] () { std::cout << "no\n"; }
+  );
+
+  // executes yes if cond returns 0, or no if cond returns 1
+  cond.precede(yes, no);
+  cond.succeed(init);
+  @endcode
+
+  @note
+  Please refer to @ref ConditionalTasking for details.
+  */
+  template <ConditionTaskLike C>
+  Task emplace(C&& callable);
+
+  /**
+  @brief creates a multi-condition task
+
+  @tparam C callable type satisfying tf::MultiConditionTaskLike
+
+  @param callable callable to construct a multi-condition task
+
+  @return a tf::Task handle
+
+  The following example creates a multi-condition task that selectively
+  jumps to two successor tasks.
+
+  @code{.cpp}
+  tf::Taskflow taskflow;
+
+  auto [init, cond, branch1, branch2, branch3] = taskflow.emplace(
+    [] () { },
+    [] () { return tf::SmallVector{0, 2}; },
+    [] () { std::cout << "branch1\n"; },
+    [] () { std::cout << "branch2\n"; },
+    [] () { std::cout << "branch3\n"; }
+  );
+
+  // executes branch1 and branch3 when cond returns 0 and 2
+  cond.precede(branch1, branch2, branch3);
+  cond.succeed(init);
+  @endcode
+
+  @note
+  Please refer to @ref ConditionalTasking for details.
+  */
+  template <MultiConditionTaskLike C>
+  Task emplace(C&& callable);
+
+  /**
+  @brief creates multiple tasks from a list of callable objects
+
+  @tparam C callable types
+
+  @param callables one or multiple callable objects constructible from each task category
+
+  @return a tf::Task handle
+
+  The method returns a tuple of tasks each corresponding to the given
+  callable target. You can use structured binding to get the return tasks
+  one by one.
+  The following example creates four static tasks and assign them to
+  @c A, @c B, @c C, and @c D using structured binding.
+
+  @code{.cpp}
+  auto [A, B, C, D] = taskflow.emplace(
+    [] () { std::cout << "A"; },
+    [] () { std::cout << "B"; },
+    [] () { std::cout << "C"; },
+    [] () { std::cout << "D"; }
+  );
+  @endcode
+  */
+  template <typename... C> requires (sizeof...(C) > 1)
+  auto emplace(C&&... callables);
+
+  /**
+  @brief removes a task from a taskflow
+
+  @param task task to remove
+
+  Removes a task and its input and output dependencies from the graph
+  associated with the flow builder.
+  If the task does not belong to the graph, nothing will happen.
+
+  @code{.cpp}
+  tf::Task A = taskflow.emplace([](){ std::cout << "A"; });
+  tf::Task B = taskflow.emplace([](){ std::cout << "B"; });
+  tf::Task C = taskflow.emplace([](){ std::cout << "C"; });
+  tf::Task D = taskflow.emplace([](){ std::cout << "D"; });
+  A.precede(B, C, D);
+
+  // erase A from the taskflow and its dependencies to B, C, and D
+  taskflow.erase(A);
+  @endcode
+  */
+  void erase(Task task);
+
+  /**
+  @brief creates a module task for the target object
+
+  @tparam T type satisfying tf::GraphLike
+  @param object a custom object that defines the method @c T::graph()
+
+  @return a tf::Task handle
+
+  The example below demonstrates a taskflow composition using
+  the @c composed_of method.
+
+  @code{.cpp}
+  tf::Taskflow t1, t2;
+  t1.emplace([](){ std::cout << "t1"; });
+
+  // t2 is partially composed of t1
+  tf::Task comp = t2.composed_of(t1);
+  tf::Task init = t2.emplace([](){ std::cout << "t2"; });
+  init.precede(comp);
+  @endcode
+
+  The taskflow object @c t2 is composed of another taskflow object @c t1,
+  preceded by another static task @c init.
+  When taskflow @c t2 is submitted to an executor,
+  @c init will run first and then @c comp which spawns its definition
+  in taskflow @c t1.
+
+  The target @c object being composed must define the method
+  <tt>T::graph()</tt> that returns a reference to a graph object of
+  type tf::Graph such that it can interact with the executor.
+  For example:
+
+  @code{.cpp}
+  // custom struct
+  struct MyObj {
+    tf::Graph graph;
+    MyObj() {
+      tf::FlowBuilder builder(graph);
+      tf::Task task = builder.emplace([](){
+        std::cout << "a task\n";  // static task
+      });
+    }
+    Graph& graph() { return graph; }
+  };
+
+  MyObj obj;
+  tf::Task comp = taskflow.composed_of(obj);
+  @endcode
+
+  Or, simply expose the graph object and pass it to `composed_of`:
+  
+  @code{.cpp}
+  tf::Graph graph;
+  tf::FlowBuilder builder(graph);
+  tf::Task task = builder.emplace([](){
+    std::cout << "a task\n";  // static task
+  });
+  tf::Task comp = taskflow.composed_of(graph);
+  @endcode
+
+  @note
+  Please refer to @ref ComposableTasking for details.
+  */
+  template <GraphLike T>
+  Task composed_of(T& object);
+  
+  /**
+  @brief creates a module task from a graph by taking over its ownership
+  
+  @param graph the graph to adopt (moved into the task)
+  
+  @return a Task handle to the adopted module task
+  
+  Unlike tf::FlowBuilder::composed_of, which references an externally-owned
+  tf::Taskflow, @c adopt transfers ownership of the given tf::Graph into
+  the task. The graph's lifetime is managed by the executor once adopted,
+  and the caller has no access to the moved-from graph afterward.
+  
+  @code{.cpp}
+  tf::Taskflow taskflow;
+  tf::Graph g;
+  tf::FlowBuilder{g}.emplace([]{ std::cout << "task in adopted graph\n"; });
+  taskflow.adopt(std::move(g)).name("adopted");
+  @endcode
+  
+  @note Please refer to @ref ComposableTasking for details.
+  */
+  Task adopt(Graph&& graph);
+
+  /**
+  @brief creates a module task for the target object (convenience overload of tf::FlowBuilder::composed_of)
+
+  @tparam T type satisfying tf::GraphLike
+
+  @param object a custom object that defines the method @c T::graph()
+
+  @return a tf::Task handle
+
+  This overload lets you create a module task through the same @c emplace
+  call you already use for static, runtime, subflow, and condition tasks,
+  instead of reaching for the differently-named @c composed_of.
+  It is equivalent to calling tf::FlowBuilder::composed_of(object) and
+  references the externally-owned graph of @c object, so the caller remains
+  responsible for keeping @c object alive for as long as the resulting task
+  may run.
+
+  @code{.cpp}
+  tf::Taskflow t1, t2;
+  t1.emplace([](){ std::cout << "t1"; });
+
+  // equivalent to: tf::Task comp = t2.composed_of(t1);
+  tf::Task comp = t2.emplace(t1);
+  @endcode
+
+  @note
+  Please refer to @ref ComposableTasking for details.
+  */
+  template <GraphLike T>
+  Task emplace(T& object);
+
+  /**
+  @brief creates a module task from a graph by taking over its ownership
+         (convenience overload of tf::FlowBuilder::adopt)
+
+  @param graph the graph to adopt (moved into the task)
+
+  @return a Task handle to the adopted module task
+
+  This overload lets you create an adopted module task through the same
+  @c emplace call you already use for other task types, instead of reaching
+  for the differently-named @c adopt.
+  It is equivalent to calling tf::FlowBuilder::adopt(std::move(graph)) and
+  transfers ownership of @c graph into the task; the caller has no access
+  to the moved-from graph afterward.
+
+  @code{.cpp}
+  tf::Taskflow taskflow;
+  tf::Graph g;
+  tf::FlowBuilder{g}.emplace([]{ std::cout << "task in adopted graph\n"; });
+
+  // equivalent to: taskflow.adopt(std::move(g)).name("adopted");
+  taskflow.emplace(std::move(g)).name("adopted");
+  @endcode
+
+  @note Please refer to @ref ComposableTasking for details.
+  */
+  Task emplace(Graph&& graph);
+
+  /**
+  @brief creates a placeholder task
+
+  @return a tf::Task handle
+
+  A placeholder task maps to a node in the taskflow graph, but
+  it does not have any callable work assigned yet.
+  A placeholder task is different from an empty task handle that
+  does not point to any node in a graph.
+
+  @code{.cpp}
+  // create a placeholder task with no callable target assigned
+  tf::Task placeholder = taskflow.placeholder();
+  assert(placeholder.empty() == false && placeholder.has_work() == false);
+
+  // create an empty task handle
+  tf::Task task;
+  assert(task.empty() == true);
+
+  // assign the task handle to the placeholder task
+  task = placeholder;
+  assert(task.empty() == false && task.has_work() == false);
+  @endcode
+  */
+  Task placeholder();
+
+  /**
+  @brief adds adjacent dependency links to a linear list of tasks
+
+  @param tasks a vector of tasks
+
+  This member function creates linear dependencies over a vector of tasks.
+
+  @code{.cpp}
+  tf::Task A = taskflow.emplace([](){ std::cout << "A"; });
+  tf::Task B = taskflow.emplace([](){ std::cout << "B"; });
+  tf::Task C = taskflow.emplace([](){ std::cout << "C"; });
+  tf::Task D = taskflow.emplace([](){ std::cout << "D"; });
+  std::vector<tf::Task> tasks {A, B, C, D}
+  taskflow.linearize(tasks);  // A->B->C->D
+  @endcode
+
+  */
+  void linearize(std::vector<Task>& tasks);
+
+  /**
+  @brief adds adjacent dependency links to a linear list of tasks
+
+  @param tasks an initializer list of tasks
+
+  This member function creates linear dependencies over a list of tasks.
+
+  @code{.cpp}
+  tf::Task A = taskflow.emplace([](){ std::cout << "A"; });
+  tf::Task B = taskflow.emplace([](){ std::cout << "B"; });
+  tf::Task C = taskflow.emplace([](){ std::cout << "C"; });
+  tf::Task D = taskflow.emplace([](){ std::cout << "D"; });
+  taskflow.linearize({A, B, C, D});  // A->B->C->D
+  @endcode
+  */
+  void linearize(std::initializer_list<Task> tasks);
+
+
+  // ------------------------------------------------------------------------
+  // parallel iterations
+  // ------------------------------------------------------------------------
+
+  /**
+  @brief constructs an STL-styled parallel-for task
+
+  @tparam B beginning iterator type satisfying tf::InputIteratorLike
+  @tparam E ending iterator type satisfying tf::InputIteratorLike
+  @tparam C callable type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first iterator to the beginning (inclusive)
+  @param last iterator to the end (exclusive)
+  @param callable callable object to apply to the dereferenced iterator
+  @param part partitioning algorithm to schedule parallel iterations
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks that applies the callable object to each object
+  obtained by dereferencing every iterator in the range <tt>[first, last)</tt>.
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  for(auto itr=first; itr!=last; itr++) {
+    callable(*itr);
+  }
+  @endcode
+
+  Iterators can be made stateful by using std::reference_wrapper
+  The callable needs to take a single argument of
+  the dereferenced iterator type.
+
+  @note
+  Please refer to @ref ParallelIterations for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename C, PartitionerLike P = DefaultPartitioner>
+  requires UnaryOperationLike<C, std::decay_t<std::unwrap_ref_decay_t<B>>> 
+  Task for_each(B first, E last, C callable, P part = P());
+  
+  /**
+  @brief constructs an index-based parallel-for task 
+
+  @tparam B beginning index type (must be integral)
+  @tparam E ending index type (must be integral)
+  @tparam S step type (must be integral)
+  @tparam C callable type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first index of the beginning (inclusive)
+  @param last index of the end (exclusive)
+  @param step step size
+  @param callable callable object to apply to each valid index
+  @param part partitioning algorithm to schedule parallel iterations
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks that applies the callable object to each index
+  in the range <tt>[first, last)</tt> with the step size.
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  // case 1: step size is positive
+  for(auto i=first; i<last; i+=step) {
+    callable(i);
+  }
+
+  // case 2: step size is negative
+  for(auto i=first, i>last; i+=step) {
+    callable(i);
+  }
+  @endcode
+
+  Iterators can be made stateful by using std::reference_wrapper
+  The callable needs to take a single argument of the integral index type.
+
+  @note
+  Please refer to @ref ParallelIterations for details.
+  */
+  template <typename B, typename E, typename S, typename C, PartitionerLike P = DefaultPartitioner>
+  Task for_each_index(B first, E last, S step, C callable, P part = P());
+
+  /**
+  @brief constructs a parallel-for task over a one- or multi-dimensional index range
+
+  @tparam R type satisfying tf::IndexRangesLike (i.e., tf::IndexRanges<T, N>);
+            for @c N == 1 (equivalently, @c R is tf::IndexRange<T>) the engine
+            uses the 1D unraveling fast path described below, and for @c N > 1
+            it partitions the Cartesian product as described further down
+  @tparam C callable type that is invocable with a single argument of type R
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param range index range
+  @param callable callable object to apply to each partitioned index range
+  @param part partitioning algorithm to schedule parallel iterations
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks that partition @c range and invoke
+  @c callable once per partition, where each partition is itself a (sub-)range
+  of the same type @c R.
+
+  @par One-dimensional range (`N` == 1)
+
+  For a 1D range <tt>tf::IndexRange<T></tt>, the task applies @c callable to
+  each index subrange of <tt>[first, last)</tt> with the given step size. This
+  is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  // case 1: step size is positive
+  for(auto i=first; i<last; i+=step) {
+    callable(i);
+  }
+
+  // case 2: step size is negative
+  for(auto i=first; i>last; i+=step) {
+    callable(i);
+  }
+  @endcode
+
+  @code{.cpp}
+  // [0, 17) with a step size of 2 using tf::IndexRange
+  tf::IndexRange<int> range(0, 17, 2);
+
+  // parallelize the sequence [0, 2, 4, 6, 8, 10, 12, 14, 16]
+  taskflow.for_each_by_index(range, [](tf::IndexRange<int> subrange) {
+    // iterate each index in the subrange
+    for(int i=subrange.begin(); i<subrange.end(); i+=subrange.step_size()) {
+      printf("iterate %d\n", i);
+    }
+  });
+
+  executor.run(taskflow).wait();
+  @endcode
+
+  @par Multi-dimensional ranges (`N` > 1)
+
+  For @c N > 1, the function parallelises iteration over the Cartesian product
+  of @c N independent 1D ranges.  The total iteration space is linearized in
+  row-major order (last dimension varies fastest) and divided among workers
+  according to @c part.  Each worker receives one or more orthogonal sub-boxes
+  and invokes @c callable once per sub-box.
+
+  Each sub-box is guaranteed to be a valid hyper-rectangle: every dimension of
+  the sub-box lies entirely within the corresponding dimension of @c range and
+  preserves its original step size, including negative strides.  Each
+  dimension of a tf::IndexRanges is a <tt>std::tuple<T, T, T></tt> of
+  (begin, end, step) accessible through @c dim(d), so the callable typically
+  destructures it via structured bindings and must iterate the sub-box using
+  the step sizes reported by each dimension:
+
+  @code{.cpp}
+  // 3D range: depth x height x width
+  tf::IndexRanges<int, 3> range(
+    tf::IndexRange<int>(0, D, 1),
+    tf::IndexRange<int>(0, H, 1),
+    tf::IndexRange<int>(0, W, 1)
+  );
+
+  taskflow.for_each_by_index(range, [](const tf::IndexRanges<int, 3>& sub) {
+    auto [d0, d1, ds] = sub.dim(0);
+    auto [h0, h1, hs] = sub.dim(1);
+    auto [w0, w1, ws] = sub.dim(2);
+    for(auto d = d0; d < d1; d += ds) {
+      for(auto h = h0; h < h1; h += hs) {
+        for(auto w = w0; w < w1; w += ws) {
+          // process element (d, h, w)
+        }
+      }
+    }
+  });
+  @endcode
+
+  <b>Stateful ranges</b>
+
+  Ranges of any rank can be made stateful by passing them through
+  @c std::reference_wrapper (via @c std::ref). This is useful when the range
+  bounds are not known at task-graph construction time. An upstream task must
+  set the bounds before this task runs:
+
+  @code{.cpp}
+  tf::IndexRanges<int, 2> range;
+
+  auto init = taskflow.emplace([&](){
+    range.dim(0) = {0, rows, 1};
+    range.dim(1) = {0, cols, 1};
+  });
+
+  auto loop = taskflow.for_each_by_index(std::ref(range), callable);
+  init.precede(loop);
+  @endcode
+
+  The loop condition inside the callable must respect the sign of each
+  dimension's step size: use @c < for positive steps and @c > for negative steps.
+
+  @note
+  Please refer to @ref ParallelIterations for details.
+  */
+  template <IndexRangesLike R, typename C, PartitionerLike P = DefaultPartitioner>
+  Task for_each_by_index(R range, C callable, P part = P());
+
+  // ------------------------------------------------------------------------
+  // transform
+  // ------------------------------------------------------------------------
+
+  /**
+  @brief constructs a parallel-transform task
+
+  @tparam B beginning input iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending input iterator type (satisfying tf::InputIteratorLike))
+  @tparam O output iterator type
+  @tparam C callable type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first1 iterator to the beginning of the first range
+  @param last1 iterator to the end of the first range
+  @param d_first iterator to the beginning of the output range
+  @param c an unary callable to apply to dereferenced input elements
+  @param part partitioning algorithm to schedule parallel iterations
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks that applies the callable object to an
+  input range and stores the result in another output range.
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  while (first1 != last1) {
+    *d_first++ = c(*first1++);
+  }
+  @endcode
+
+  Iterators can be made stateful by using std::reference_wrapper
+  The callable needs to take a single argument of the dereferenced
+  iterator type.
+  
+  @note
+  Please refer to @ref ParallelTransforms for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename O, typename C,
+            PartitionerLike P = DefaultPartitioner>
+  requires UnaryTransformLike<
+    C, 
+    std::decay_t<std::unwrap_ref_decay_t<B>>,
+    std::decay_t<std::unwrap_ref_decay_t<O>>
+  >
+  Task transform(B first1, E last1, O d_first, C c, P part = P());
+  
+  /**
+  @brief constructs a parallel-transform task
+
+  @tparam B1 beginning input iterator type for the first input range (satisfying tf::InputIteratorLike)
+  @tparam E1 ending input iterator type for the first input range (satisfying tf::InputIteratorLike)
+  @tparam B2 beginning input iterator type for the first second range (satisfying tf::InputIteratorLike)
+  @tparam O output iterator type
+  @tparam C callable type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first1 iterator to the beginning of the first input range
+  @param last1 iterator to the end of the first input range
+  @param first2 iterator to the beginning of the second input range
+  @param d_first iterator to the beginning of the output range
+  @param c a binary operator to apply to dereferenced input elements
+  @param part partitioning algorithm to schedule parallel iterations
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks that applies the callable object to two
+  input ranges and stores the result in another output range.
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  while (first1 != last1) {
+    *d_first++ = c(*first1++, *first2++);
+  }
+  @endcode
+
+  Iterators can be made stateful by using std::reference_wrapper
+  The callable needs to take two arguments of dereferenced elements
+  from the two input ranges.
+  
+  @note
+  Please refer to @ref ParallelTransforms for details.
+  */
+  template <InputIteratorLike B1, InputIteratorLike E1, InputIteratorLike B2, typename O, typename C,
+            PartitionerLike P = DefaultPartitioner>
+  requires BinaryTransformLike<
+    C, 
+    std::decay_t<std::unwrap_ref_decay_t<B1>>,
+    std::decay_t<std::unwrap_ref_decay_t<B2>>,
+    std::decay_t<std::unwrap_ref_decay_t<O>>
+  >
+  Task transform(B1 first1, E1 last1, B2 first2, O d_first, C c, P part = P());
+  
+  // ------------------------------------------------------------------------
+  // reduction
+  // ------------------------------------------------------------------------
+
+  /**
+  @brief constructs an STL-styled parallel-reduction task
+
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam T result type
+  @tparam O binary reducer type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first iterator to the beginning (inclusive)
+  @param last iterator to the end (exclusive)
+  @param init initial value of the reduction and the storage for the reduced result
+  @param bop binary operator that will be applied
+  @param part partitioning algorithm to schedule parallel iterations
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks to perform parallel reduction over @c init
+  and the elements in the range <tt>[first, last)</tt>.
+  The reduced result is store in @c init.
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  for(auto itr=first; itr!=last; itr++) {
+    init = bop(init, *itr);
+  }
+  @endcode
+
+  Iterators can be made stateful by using std::reference_wrapper
+
+  @note
+  Please refer to @ref ParallelReduction for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename T, typename O, PartitionerLike P = DefaultPartitioner>
+  Task reduce(B first, E last, T& init, O bop, P part = P());
+
+  /**
+  @brief constructs an index range-based parallel-reduction task over a
+         one- or multi-dimensional index range
+
+  @tparam R type satisfying tf::IndexRangesLike (i.e., tf::IndexRanges<T, N>);
+            for @c N == 1 (equivalently, @c R is tf::IndexRange<T>) @c lop
+            receives a 1D subrange as described below, and for @c N > 1 it
+            receives a sub-box of the Cartesian product, mirroring
+            tf::FlowBuilder::for_each_by_index
+  @tparam T result type
+  @tparam L local reducer type
+  @tparam G global reducer type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param range index range
+  @param init initial value of the reduction and the storage for the reduced result
+  @param lop binary operator that will be applied locally per worker
+  @param gop binary operator that will be applied globally among worker
+  @param part partitioning algorithm to schedule parallel iterations
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks to perform parallel reduction over a range with @c init.
+  The reduced result is store in @c init.
+  Unlike the iterator-based reduction,
+  index range-based reduction is particularly useful for applications that benefit from SIMD optimizations
+  or other range-based processing strategies.
+
+  @par One-dimensional range (`N` == 1)
+
+  @code{.cpp}
+  const size_t N = 1000000;
+  std::vector<int> data(N);  // uninitialized data vector
+  int res = 1;               // res will participate in the reduction
+
+  taskflow.reduce_by_index(
+    tf::IndexRange<size_t>(0, N, 1),
+    // final result
+    res,
+    // local reducer
+    [&](tf::IndexRange<size_t> subrange, std::optional<int> running_total) -> int {
+      int residual = running_total ? *running_total : 0.0;
+      for(size_t i=subrange.begin(); i<subrange.end(); i+=subrange.step_size()) {
+        data[i] = 1.0;
+        residual += data[i];
+      }
+      printf("partial sum = %lf\n", residual);
+      return residual;
+    },
+    // global reducer
+    std::plus<int>()
+  );
+  executor.run(taskflow).wait();
+  assert(res = N + 1);
+  @endcode
+
+  @par Multi-dimensional ranges (`N` > 1)
+
+  For @c N > 1, @c lop is invoked once per sub-box of the partitioned
+  Cartesian product, exactly like the @c callable passed to
+  tf::FlowBuilder::for_each_by_index. Each dimension of a tf::IndexRanges is
+  a <tt>std::tuple<T, T, T></tt> of (begin, end, step) accessible through
+  @c dim(d), so @c lop typically destructures it via structured bindings:
+
+  @code{.cpp}
+  // 2D range: rows x cols
+  tf::IndexRanges<int, 2> range(
+    tf::IndexRange<int>(0, rows, 1),
+    tf::IndexRange<int>(0, cols, 1)
+  );
+  double res = 0.0;
+
+  taskflow.reduce_by_index(
+    range,
+    res,
+    // local reducer
+    [&](const tf::IndexRanges<int, 2>& sub, std::optional<double> running_total) -> double {
+      double residual = running_total ? *running_total : 0.0;
+      auto [r0, r1, rs] = sub.dim(0);
+      auto [c0, c1, cs] = sub.dim(1);
+      for(auto r = r0; r < r1; r += rs) {
+        for(auto c = c0; c < c1; c += cs) {
+          residual += data[r][c];
+        }
+      }
+      return residual;
+    },
+    std::plus<double>()
+  );
+  executor.run(taskflow).wait();
+  @endcode
+
+  Range can be made stateful by using std::reference_wrapper.
+
+  @note
+  Please refer to @ref ParallelReduction for details.
+  */
+  template <IndexRangesLike R, typename T, typename L, typename G, PartitionerLike P = DefaultPartitioner>
+  Task reduce_by_index(R range, T& init, L lop, G gop, P part = P());
+  
+  // ------------------------------------------------------------------------
+  // transform and reduction
+  // ------------------------------------------------------------------------
+
+  /**
+  @brief constructs an STL-styled parallel transform-reduce task
+
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam T result type
+  @tparam BOP binary reducer type
+  @tparam UOP unary transformation type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first iterator to the beginning (inclusive)
+  @param last iterator to the end (exclusive)
+  @param init initial value of the reduction and the storage for the reduced result
+  @param bop binary operator that will be applied in unspecified order to the results of @c uop
+  @param uop unary operator that will be applied to transform each element in the range to the result type
+  @param part partitioning algorithm to schedule parallel iterations
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks to perform parallel reduction over @c init and
+  the transformed elements in the range <tt>[first, last)</tt>.
+  The reduced result is store in @c init.
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  for(auto itr=first; itr!=last; itr++) {
+    init = bop(init, uop(*itr));
+  }
+  @endcode
+
+  Iterators can be made stateful by using std::reference_wrapper
+
+  @note
+  Please refer to @ref ParallelReduction for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename T, typename BOP, typename UOP,
+            PartitionerLike P = DefaultPartitioner>
+  Task transform_reduce(B first, E last, T& init, BOP bop, UOP uop, P part = P());
+
+  /**
+  @brief constructs an STL-styled parallel transform-reduce task
+  @tparam B1 first beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E1 first ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam B2 second beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam T result type
+  @tparam BOP_R binary reducer type
+  @tparam BOP_T binary transformation type
+  @tparam P type satisfying tf::PartitionerLike
  
-    /**
-    @brief construct a task dependency graph of parallel reduction
-    
-    The task dependency graph reduces items in the range [beg, end) to a single result.
-    
-    @tparam I input iterator type
-    @tparam T data type
-    @tparam B binary operator type
+  @param first1 iterator to the beginning of the first range (inclusive)
+  @param last1 iterator to the end of the first range (exclusive)
+  @param first2 iterator to the beginning of the second range
+  @param init initial value of the reduction and the storage for the reduced result
+  @param bop_r binary operator that will be applied in unspecified order to the results of @c bop_t
+  @param bop_t binary operator that will be applied to transform each element in the range to the result type
+  @param part partitioning algorithm to schedule parallel iterations
+ 
+  @return a tf::Task handle
+ 
+  The task spawns asynchronous tasks to perform parallel reduction over @c init and
+  transformed elements in the range <tt>[first, last)</tt>.
+  The reduced result is store in @c init.
+  This method is equivalent to the parallel execution of the following loop:
+ 
+  @code{.cpp}
+  for(auto itr1=first1, itr2=first2; itr1!=last1; itr1++, itr2++) {
+    init = bop_r(init, bop_t(*itr1, *itr2));
+  }
+  @endcode
+ 
+  Iterators can be made stateful by using std::reference_wrapper
 
-    @param beg    iterator to the beginning (inclusive)
-    @param end    iterator to the end (exclusive)
-    @param result reference variable to store the final result
-    @param bop    binary operator that will be applied in unspecified order to the result
-                  of dereferencing the input iterator
-    
-    @return a pair of Task handles to the beginning and the end of the graph
-    */
-    template <typename I, typename T, typename B>
-    std::pair<Task, Task> reduce(I beg, I end, T& result, B&& bop);
-    
-    /**
-    @brief constructs a task dependency graph of parallel reduction through @std_min
-    
-    The task dependency graph applies a parallel reduction
-    to find the minimum item in the range [beg, end) through @std_min reduction.
+  @note
+  Please refer to @ref ParallelReduction for details.
+  */
+  
+  template <InputIteratorLike B1, InputIteratorLike E1, InputIteratorLike B2, typename T,
+            typename BOP_R, typename BOP_T, PartitionerLike P = DefaultPartitioner>
+  requires BinaryOperationLike<
+    BOP_T,
+    std::decay_t<std::unwrap_ref_decay_t<B1>>,
+    std::decay_t<std::unwrap_ref_decay_t<B2>>
+  >
+  Task transform_reduce(
+    B1 first1, E1 last1, B2 first2, T& init, BOP_R bop_r, BOP_T bop_t, P part = P()
+  );
 
-    @tparam I input iterator type
-    @tparam T data type 
+  // ------------------------------------------------------------------------
+  // scan
+  // ------------------------------------------------------------------------
 
-    @param beg    iterator to the beginning (inclusive)
-    @param end    iterator to the end (exclusive)
-    @param result reference variable to store the final result
+  /**
+  @brief creates an STL-styled parallel inclusive-scan task
 
-    @return a pair of Task handles to the beginning and the end of the graph
-    */
-    template <typename I, typename T>
-    std::pair<Task, Task> reduce_min(I beg, I end, T& result);
-    
-    /**
-    @brief constructs a task dependency graph of parallel reduction through @std_max
-    
-    The task dependency graph applies a parallel reduction
-    to find the maximum item in the range [beg, end) through @std_max reduction.
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam D destination iterator type
+  @tparam BOP summation operator type
 
-    @tparam I input iterator type
-    @tparam T data type 
+  @param first start of input range
+  @param last end of input range
+  @param d_first start of output range (may be the same as input range)
+  @param bop function to perform summation
 
-    @param beg    iterator to the beginning (inclusive)
-    @param end    iterator to the end (exclusive)
-    @param result reference variable to store the final result
+  Performs the cumulative sum (aka prefix sum, aka scan) of the input range
+  and writes the result to the output range.
+  Each element of the output range contains the
+  running total of all earlier elements using the given binary operator
+  for summation.
 
-    @return a pair of Task handles to the beginning and the end of the graph
-    */
-    template <typename I, typename T>
-    std::pair<Task, Task> reduce_max(I beg, I end, T& result);
-    
-    /** 
-    @brief constructs a task dependency graph of parallel transformation and reduction
-    
-    The task dependency graph transforms each item in the range [beg, end) 
-    into a new data type and then reduce the results.
+  This function generates an @em inclusive scan, meaning that the N-th element
+  of the output range is the sum of the first N input elements,
+  so the N-th input element is included.
 
-    @tparam I input iterator type
-    @tparam T data type
-    @tparam B binary operator
-    @tparam U unary operator type
+  @code{.cpp}
+  std::vector<int> input = {1, 2, 3, 4, 5};
+  taskflow.inclusive_scan(
+    input.begin(), input.end(), input.begin(), std::plus<int>{}
+  );
+  executor.run(taskflow).wait();
 
-    @param beg    iterator to the beginning (inclusive)
-    @param end    iterator to the end (exclusive)
-    @param result reference variable to store the final result
-    @param bop    binary function object that will be applied in unspecified order 
-                  to the results of @c uop; the return type must be @c T
-    @param uop    unary function object that transforms each element 
-                  in the input range; the return type must be acceptable as input to @c bop
-    
-    @return a pair of Task handles to the beginning and the end of the graph
-    */
-    template <typename I, typename T, typename B, typename U>
-    std::pair<Task, Task> transform_reduce(I beg, I end, T& result, B&& bop, U&& uop);
-    
-    /**
-    @brief constructs a task dependency graph of parallel transformation and reduction
-    
-    The task dependency graph transforms each item in the range [beg, end) 
-    into a new data type and then apply two-layer reductions to derive the result.
+  // input is {1, 3, 6, 10, 15}
+  @endcode
 
-    @tparam I input iterator type
-    @tparam T data type
-    @tparam B binary operator type
-    @tparam P binary operator type
-    @tparam U unary operator type
+  Iterators can be made stateful by using std::reference_wrapper
 
-    @param beg    iterator to the beginning (inclusive)
-    @param end    iterator to the end (exclusive)
-    @param result reference variable to store the final result
-    @param bop1   binary function object that will be applied in the second-layer reduction
-                  to the results of @c bop2
-    @param bop2   binary function object that will be applied in the first-layer reduction
-                  to the results of @c uop and the dereferencing of input iterators
-    @param uop    unary function object that will be applied to transform an item to a new 
-                  data type that is acceptable as input to @c bop2
-    
-    @return a pair of Task handles to the beginning and the end of the graph
-    */
-    template <typename I, typename T, typename B, typename P, typename U>
-    std::pair<Task, Task> transform_reduce(
-      I beg, I end, T& result, B&& bop1, P&& bop2, U&& uop
-    );
-    
-    /**
-    @brief creates an empty task
+  @note
+  Please refer to @ref ParallelScan for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename D, typename BOP>
+  Task inclusive_scan(B first, E last, D d_first, BOP bop);
+  
+  /**
+  @brief creates an STL-styled parallel inclusive-scan task with an initial value
 
-    @return a Task handle
-    */
-    Task placeholder();
-    
-    /**
-    @brief adds a dependency link from task A to task B
-    
-    @param A task A
-    @param B task B
-    */
-    void precede(Task A, Task B);
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam D destination iterator type
+  @tparam BOP summation operator type
+  @tparam T initial value type
 
-    /**
-    @brief adds adjacent dependency links to a linear list of tasks
+  @param first start of input range
+  @param last end of input range
+  @param d_first start of output range (may be the same as input range)
+  @param bop function to perform summation
+  @param init initial value
 
-    @param tasks a vector of tasks
-    */
-    void linearize(std::vector<Task>& tasks);
+  Performs the cumulative sum (aka prefix sum, aka scan) of the input range
+  and writes the result to the output range. 
+  Each element of the output range contains the
+  running total of all earlier elements (and the initial value)
+  using the given binary operator for summation.
+  
+  This function generates an @em inclusive scan, meaning the N-th element
+  of the output range is the sum of the first N input elements,
+  so the N-th input element is included.
 
-    /**
-    @brief adds adjacent dependency links to a linear list of tasks
+  @code{.cpp}
+  std::vector<int> input = {1, 2, 3, 4, 5};
+  taskflow.inclusive_scan(
+    input.begin(), input.end(), input.begin(), std::plus<int>{}, -1
+  );
+  executor.run(taskflow).wait();
+  
+  // input is {0, 2, 5, 9, 14}
+  @endcode
+  
+  Iterators can be made stateful by using std::reference_wrapper
+ 
+  @note
+  Please refer to @ref ParallelScan for details.
 
-    @param tasks an initializer list of tasks
-    */
-    void linearize(std::initializer_list<Task> tasks);
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename D, typename BOP, typename T>
+  Task inclusive_scan(B first, E last, D d_first, BOP bop, T init);
+  
+  /**
+  @brief creates an STL-styled parallel exclusive-scan task
 
-    /**
-    @brief adds dependency links from one task A to many tasks
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam D destination iterator type
+  @tparam T initial value type
+  @tparam BOP summation operator type
 
-    @param A      task A
-    @param others a task set which A precedes
-    */
-    void broadcast(Task A, std::vector<Task>& others);
+  @param first start of input range
+  @param last end of input range
+  @param d_first start of output range (may be the same as input range)
+  @param init initial value
+  @param bop function to perform summation
 
-    /**
-    @brief adds dependency links from one task A to many tasks
+  Performs the cumulative sum (aka prefix sum, aka scan) of the input range
+  and writes the result to the output range. 
+  Each element of the output range contains the
+  running total of all earlier elements (and the initial value)
+  using the given binary operator for summation.
+  
+  This function generates an @em exclusive scan, meaning the N-th element
+  of the output range is the sum of the first N-1 input elements,
+  so the N-th input element is not included.
 
-    @param A      task A
-    @param others a task set which A precedes
-    */
-    void broadcast(Task A, std::initializer_list<Task> others);
+  @code{.cpp}
+  std::vector<int> input = {1, 2, 3, 4, 5};
+  taskflow.exclusive_scan(
+    input.begin(), input.end(), input.begin(), -1, std::plus<int>{}
+  );
+  executor.run(taskflow).wait();
+  
+  // input is {-1, 0, 2, 5, 9}
+  @endcode
+  
+  Iterators can be made stateful by using std::reference_wrapper
+  
+  @note
+  Please refer to @ref ParallelScan for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename D, typename T, typename BOP>
+  Task exclusive_scan(B first, E last, D d_first, T init, BOP bop);
+  
+  // ------------------------------------------------------------------------
+  // transform scan
+  // ------------------------------------------------------------------------
+  
+  /**
+  @brief creates an STL-styled parallel transform-inclusive scan task
 
-    /**
-    @brief adds dependency links from many tasks to one task A
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam D destination iterator type
+  @tparam BOP summation operator type
+  @tparam UOP transform operator type
 
-    @param others a task set to precede A
-    @param A task A
-    */
-    void succeed(std::vector<Task>& others, Task A);
+  @param first start of input range
+  @param last end of input range
+  @param d_first start of output range (may be the same as input range)
+  @param bop function to perform summation
+  @param uop function to transform elements of the input range
 
-    /**
-    @brief adds dependency links from many tasks to one task A
+  Write the cumulative sum (aka prefix sum, aka scan) of the input range
+  to the output range. Each element of the output range contains the
+  running total of all earlier elements
+  using @c uop to transform the input elements
+  and using @c bop for summation.
+  
+  This function generates an @em inclusive scan, meaning the Nth element
+  of the output range is the sum of the first N input elements,
+  so the Nth input element is included.
 
-    @param others a task set to precede A
-    @param A task A
-    */
-    void succeed(std::initializer_list<Task> others, Task A);
-    
+  @code{.cpp}
+  std::vector<int> input = {1, 2, 3, 4, 5};
+  taskflow.transform_inclusive_scan(
+    input.begin(), input.end(), input.begin(), std::plus<int>{}, 
+    [] (int item) { return -item; }
+  );
+  executor.run(taskflow).wait();
+  
+  // input is {-1, -3, -6, -10, -15}
+  @endcode
+  
+  Iterators can be made stateful by using std::reference_wrapper
+  
+  @note
+  Please refer to @ref ParallelScan for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename D, typename BOP, typename UOP>
+  Task transform_inclusive_scan(B first, E last, D d_first, BOP bop, UOP uop);
+  
+  /**
+  @brief creates an STL-styled parallel transform-inclusive scan task
+
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam D destination iterator type
+  @tparam BOP summation operator type
+  @tparam UOP transform operator type
+  @tparam T initial value type
+
+  @param first start of input range
+  @param last end of input range
+  @param d_first start of output range (may be the same as input range)
+  @param bop function to perform summation
+  @param uop function to transform elements of the input range
+  @param init initial value
+
+  Write the cumulative sum (aka prefix sum, aka scan) of the input range
+  to the output range. Each element of the output range contains the
+  running total of all earlier elements (including an initial value)
+  using @c uop to transform the input elements
+  and using @c bop for summation.
+  
+  This function generates an @em inclusive scan, meaning the Nth element
+  of the output range is the sum of the first N input elements,
+  so the Nth input element is included.
+
+  @code{.cpp}
+  std::vector<int> input = {1, 2, 3, 4, 5};
+  taskflow.transform_inclusive_scan(
+    input.begin(), input.end(), input.begin(), std::plus<int>{}, 
+    [] (int item) { return -item; },
+    -1
+  );
+  executor.run(taskflow).wait();
+  
+  // input is {-2, -4, -7, -11, -16}
+  @endcode
+  
+  Iterators can be made stateful by using std::reference_wrapper
+  
+  @note
+  Please refer to @ref ParallelScan for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename D, typename BOP, typename UOP, typename T>
+  Task transform_inclusive_scan(B first, E last, D d_first, BOP bop, UOP uop, T init);
+  
+  /**
+  @brief creates an STL-styled parallel transform-exclusive scan task
+
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam D destination iterator type
+  @tparam BOP summation operator type
+  @tparam UOP transform operator type
+  @tparam T initial value type
+
+  @param first start of input range
+  @param last end of input range
+  @param d_first start of output range (may be the same as input range)
+  @param bop function to perform summation
+  @param uop function to transform elements of the input range
+  @param init initial value
+
+  Write the cumulative sum (aka prefix sum, aka scan) of the input range
+  to the output range. Each element of the output range contains the
+  running total of all earlier elements (including an initial value)
+  using @c uop to transform the input elements
+  and using @c bop for summation.
+  
+  This function generates an @em exclusive scan, meaning the Nth element
+  of the output range is the sum of the first N-1 input elements,
+  so the Nth input element is not included.
+
+  @code{.cpp}
+  std::vector<int> input = {1, 2, 3, 4, 5};
+  taskflow.transform_exclusive_scan(
+    input.begin(), input.end(), input.begin(), -1, std::plus<int>{},
+    [](int item) { return -item; }
+  );
+  executor.run(taskflow).wait();
+  
+  // input is {-1, -2, -4, -7, -11}
+  @endcode
+  
+  Iterators can be made stateful by using std::reference_wrapper
+  
+  @note
+  Please refer to @ref ParallelScan for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename D, typename T, typename BOP, typename UOP>
+  Task transform_exclusive_scan(B first, E last, D d_first, T init, BOP bop, UOP uop);
+
+  // ------------------------------------------------------------------------
+  // find
+  // ------------------------------------------------------------------------
+ 
+  /**
+  @brief constructs a task to perform STL-styled find-if algorithm
+
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam T resulting iterator type
+  @tparam UOP unary predicate type
+  @tparam P partitioner type
+  
+  @param first start of the input range
+  @param last end of the input range
+  @param result resulting iterator to the found element in the input range
+  @param predicate unary predicate which returns @c true for the required element
+  @param part partitioning algorithm (default tf::DefaultPartitioner)
+
+  Returns an iterator to the first element in the range <tt>[first, last)</tt> 
+  that satisfies the given criteria (or last if there is no such iterator).
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  auto find_if(InputIt first, InputIt last, UnaryPredicate p) {
+    for (; first != last; ++first) {
+      if (predicate(*first)){
+        return first;
+      }
+    }
+    return last;
+  }
+  @endcode
+
+  For example, the code below find the element that satisfies the given 
+  criteria (value plus one is equal to 23) from an input range of 10 elements:
+
+  @code{.cpp}
+  std::vector<int> input = {1, 6, 9, 10, 22, 5, 7, 8, 9, 11};
+  std::vector<int>::iterator result;
+  taskflow.find_if(
+    input.begin(), input.end(), [](int i){ return i+1 = 23; }, result
+  );
+  executor.run(taskflow).wait();
+  assert(*result == 22);
+  @endcode
+  
+  Iterators can be made stateful by using std::reference_wrapper
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename T, typename UOP, PartitionerLike P = DefaultPartitioner>
+  Task find_if(B first, E last, T &result, UOP predicate, P part = P());
+
+  /**
+  @brief constructs a task to perform STL-styled find-if-not algorithm
+
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam T resulting iterator type
+  @tparam UOP unary predicate type
+  @tparam P partitioner type
+  
+  @param first start of the input range
+  @param last end of the input range
+  @param result resulting iterator to the found element in the input range
+  @param predicate unary predicate which returns @c false for the required element
+  @param part partitioning algorithm (default tf::DefaultPartitioner)
+
+  Returns an iterator to the first element in the range <tt>[first, last)</tt> 
+  that satisfies the given criteria (or last if there is no such iterator).
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  auto find_if(InputIt first, InputIt last, UnaryPredicate p) {
+    for (; first != last; ++first) {
+      if (!predicate(*first)){
+        return first;
+      }
+    }
+    return last;
+  }
+  @endcode
+
+  For example, the code below find the element that satisfies the given 
+  criteria (value is not equal to 1) from an input range of 10 elements:
+
+  @code{.cpp}
+  std::vector<int> input = {1, 1, 1, 1, 22, 1, 1, 1, 1, 1};
+  std::vector<int>::iterator result;
+  taskflow.find_if_not(
+    input.begin(), input.end(), [](int i){ return i == 1; }, result
+  );
+  executor.run(taskflow).wait();
+  assert(*result == 22);
+  @endcode
+  
+  Iterators can be made stateful by using std::reference_wrapper
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename T, typename UOP, PartitionerLike P = DefaultPartitioner>
+  Task find_if_not(B first, E last, T &result, UOP predicate, P part = P());
+
+  /**
+  @brief constructs a task to perform STL-styled min-element algorithm
+
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam T resulting iterator type
+  @tparam C comparator type
+  @tparam P partitioner type
+  
+  @param first start of the input range
+  @param last end of the input range
+  @param result resulting iterator to the found element in the input range
+  @param comp comparison function object
+  @param part partitioning algorithm (default tf::DefaultPartitioner)
+
+  Finds the smallest element in the <tt>[first, last)</tt> 
+  using the given comparison function object.
+  The iterator to that smallest element is stored in @c result.
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  if (first == last) {
+    return last;
+  }
+  auto smallest = first;
+  ++first;
+  for (; first != last; ++first) {
+    if (comp(*first, *smallest)) {
+      smallest = first;
+    }
+  }
+  return smallest;
+  @endcode
+
+  For example, the code below find the smallest element from an input
+  range of 10 elements.
+
+  @code{.cpp}
+  std::vector<int> input = {1, 1, 1, 1, 1, -1, 1, 1, 1, 1};
+  std::vector<int>::iterator result;
+  taskflow.min_element(
+    input.begin(), input.end(), std::less<int>(), result
+  );
+  executor.run(taskflow).wait();
+  assert(*result == -1);
+  @endcode
+  
+  Iterators can be made stateful by using std::reference_wrapper
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename T, typename C, PartitionerLike P>
+  Task min_element(B first, E last, T& result, C comp, P part);
+  
+  /**
+  @brief constructs a task to perform STL-styled max-element algorithm
+
+  @tparam B beginning iterator type (satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (satisfying tf::InputIteratorLike)
+  @tparam T resulting iterator type
+  @tparam C comparator type
+  @tparam P partitioner type
+  
+  @param first start of the input range
+  @param last end of the input range
+  @param result resulting iterator to the found element in the input range
+  @param comp comparison function object
+  @param part partitioning algorithm (default tf::DefaultPartitioner)
+
+  Finds the largest element in the <tt>[first, last)</tt> 
+  using the given comparison function object.
+  The iterator to that largest element is stored in @c result.
+  This method is equivalent to the parallel execution of the following loop:
+
+  @code{.cpp}
+  if (first == last){
+    return last;
+  }
+  auto largest = first;
+  ++first;
+  for (; first != last; ++first) {
+    if (comp(*largest, *first)) {
+      largest = first;
+    }
+  }
+  return largest;
+  @endcode
+
+  For example, the code below find the largest element from an input
+  range of 10 elements.
+
+  @code{.cpp}
+  std::vector<int> input = {1, 1, 1, 1, 1, 2, 1, 1, 1, 1};
+  std::vector<int>::iterator result;
+  taskflow.max_element(
+    input.begin(), input.end(), std::less<int>(), result
+  );
+  executor.run(taskflow).wait();
+  assert(*result == 2);
+  @endcode
+  
+  Iterators can be made stateful by using std::reference_wrapper
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename T, typename C, PartitionerLike P>
+  Task max_element(B first, E last, T& result, C comp, P part);
+
+  // ------------------------------------------------------------------------
+  // sort
+  // ------------------------------------------------------------------------
+
+  /**
+  @brief constructs a dynamic task to perform STL-styled parallel sort
+
+  @tparam B beginning iterator type (random-accessible and satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (random-accessible and satisfying tf::InputIteratorLike)
+  @tparam C comparator type
+
+  @param first iterator to the beginning (inclusive)
+  @param last iterator to the end (exclusive)
+  @param cmp comparison operator
+
+  The task spawns asynchronous tasks to sort elements in the range
+  <tt>[first, last)</tt> in parallel.
+
+  Iterators can be made stateful by using std::reference_wrapper
+
+  @note
+  Please refer to @ref ParallelSort for details.
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename C>
+  Task sort(B first, E last, C cmp);
+
+  /**
+  @brief constructs a dynamic task to perform STL-styled parallel sort using
+         the @c std::less<T> comparator, where @c T is the element type
+
+  @tparam B beginning iterator type (random-accessible and satisfying tf::InputIteratorLike)
+  @tparam E ending iterator type (random-accessible and satisfying tf::InputIteratorLike)
+
+  @param first iterator to the beginning (inclusive)
+  @param last iterator to the end (exclusive)
+
+  The task spawns asynchronous tasks to parallel sort elements in the range
+  <tt>[first, last)</tt> using the @c std::less<T> comparator,
+  where @c T is the dereferenced iterator type.
+
+  Iterators can be made stateful by using std::reference_wrapper
+
+  @note
+  Please refer to @ref ParallelSort for details.
+   */
+  template <InputIteratorLike B, InputIteratorLike E>
+  Task sort(B first, E last);
+
+  /**
+  @brief merges two sorted ranges into a single sorted output using the
+         @c std::less comparator
+
+  @tparam B1 beginning iterator type of the first range  (satisfying tf::InputIteratorLike) 
+  @tparam E1 ending iterator type of the first range     (satisfying tf::InputIteratorLike)
+  @tparam B2 beginning iterator type of the second range (satisfying tf::InputIteratorLike)
+  @tparam E2 ending iterator type of the second range    (satisfying tf::InputIteratorLike)
+  @tparam O  destination iterator type
+
+  @param first1 iterator to the beginning of the first range (inclusive)
+  @param last1  iterator to the end of the first range (exclusive)
+  @param first2 iterator to the beginning of the second range (inclusive)
+  @param last2  iterator to the end of the second range (exclusive)
+  @param d_first iterator to the beginning of the output range
+
+  Creates a task that merges two sorted ranges <tt>[first1, last1)</tt> and
+  <tt>[first2, last2)</tt> into a single sorted output range beginning at
+  @c d_first, using @c std::less as the comparator.
+
+  The algorithm partitions the output range into W equal chunks (one per
+  worker thread) and uses the co-rank technique to independently identify
+  each worker's corresponding sub-ranges in seq1 and seq2, then merges them
+  in parallel with no synchronization.
+
+  Unlike @c for_each or @c find, parallel merge does not benefit from dynamic
+  or guided partitioning because @c std::merge always costs O(K) for a chunk
+  of size K regardless of data — there is no load imbalance to adapt to.
+  The algorithm therefore always uses static equal partitioning.
+
+  @note Undefined behavior if either input range is not sorted with respect
+        to @c std::less.
+  */
+  template <InputIteratorLike B1, InputIteratorLike E1, InputIteratorLike B2, InputIteratorLike E2, typename O>
+  Task merge(B1 first1, E1 last1, B2 first2, E2 last2, O d_first);
+
+  /**
+  @brief merges two sorted ranges into a single sorted output using a
+         custom comparator
+
+  @tparam B1 beginning iterator type of the first range (satisfying tf::InputIteratorLike)
+  @tparam E1 ending iterator type of the first range (satisfying tf::InputIteratorLike)
+  @tparam B2 beginning iterator type of the second range (satisfying tf::InputIteratorLike)
+  @tparam E2 ending iterator type of the second range (satisfying tf::InputIteratorLike)
+  @tparam O  destination iterator type
+  @tparam C  comparator type
+
+  @param first1  iterator to the beginning of the first range (inclusive)
+  @param last1   iterator to the end of the first range (exclusive)
+  @param first2  iterator to the beginning of the second range (inclusive)
+  @param last2   iterator to the end of the second range (exclusive)
+  @param d_first iterator to the beginning of the output range
+  @param cmp     comparator function defining the sort order
+
+  Creates a task that merges two sorted ranges <tt>[first1, last1)</tt> and
+  <tt>[first2, last2)</tt> into a single sorted output range beginning at
+  @c d_first, using @c cmp as the comparator.
+
+  The algorithm partitions the output range into W equal chunks (one per
+  worker thread) and uses the co-rank technique to independently identify
+  each worker's corresponding sub-ranges in seq1 and seq2, then merges them
+  in parallel with no synchronization.
+
+  Unlike @c for_each or @c find, parallel merge does not benefit from dynamic
+  or guided partitioning because @c std::merge always costs O(K) for a chunk
+  of size K regardless of data — there is no load imbalance to adapt to.
+  The algorithm therefore always uses static equal partitioning.
+
+  @note Undefined behavior if either input range is not sorted with respect
+        to @c cmp.
+  */
+  template <InputIteratorLike B1, InputIteratorLike E1, 
+            InputIteratorLike B2, InputIteratorLike E2,
+            typename O, typename C>
+  Task merge(B1 first1, E1 last1, B2 first2, E2 last2, O d_first, C cmp);
+
+  /**
+  @brief fills a range with a given value in parallel
+
+  @tparam B iterator type (satisfying tf::InputIteratorLike)
+  @tparam E iterator type (satisfying tf::InputIteratorLike)
+  @tparam V value type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first iterator to the beginning of the range (inclusive)
+  @param last iterator to the end of the range (exclusive)
+  @param value the value to fill the range with
+  @param part partitioning algorithm (default tf::DefaultPartitioner)
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks to fill the given range
+  <tt>[first, last)</tt> with the given value in parallel.
+  This is equivalent to calling <tt>std::fill(first, last, value)</tt>
+  but in parallel.
+
+  @code{.cpp}
+  std::vector<int> vec(1000);
+  tf::Task task = taskflow.fill(vec.begin(), vec.end(), 42);
+  @endcode
+  */
+  template<InputIteratorLike B, InputIteratorLike E, typename V, PartitionerLike P = DefaultPartitioner>
+  Task fill(B first, E last, V value, P part = P());
+
+  /**
+  @brief fills N elements with a given value in parallel
+
+  @tparam B iterator type (satisfying tf::InputIteratorLike)
+  @tparam C count type (integral)
+  @tparam V value type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first iterator to the beginning of the range (inclusive)
+  @param count number of elements to fill
+  @param value the value to fill the range with
+  @param part partitioning algorithm (default tf::DefaultPartitioner)
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks to fill N elements starting from 
+  @c first with the given value in parallel.
+  This is equivalent to calling <tt>std::fill_n(first, count, value)</tt>
+  but in parallel.
+
+  @code{.cpp}
+  std::vector<int> vec(1000);
+  tf::Task task = taskflow.fill_n(vec.begin(), 500, 42);
+  @endcode
+  */
+  template<InputIteratorLike B, std::integral C, typename V, PartitionerLike P = DefaultPartitioner>
+  Task fill_n(B first, C count, V value, P part = P());
+  
+  /**
+  @brief generates values into a range in parallel using a callable
+
+  @tparam B iterator type (satisfying tf::InputIteratorLike)
+  @tparam E iterator type (satisfying tf::InputIteratorLike)
+  @tparam G generator callable type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first iterator to the beginning of the range (inclusive)
+  @param last iterator to the end of the range (exclusive)
+  @param gen generator callable that produces values
+  @param part partitioning algorithm (default tf::DefaultPartitioner)
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks to generate and fill the range
+  <tt>[first, last)</tt> with values produced by calling the 
+  generator @c gen in parallel.
+  This is equivalent to calling <tt>std::generate(first, last, gen)</tt>
+  but in parallel.
+
+  @code{.cpp}
+  std::vector<int> vec(1000);
+  tf::Task task = taskflow.generate(vec.begin(), vec.end(), 
+                                    [&counter]() { return 42; });
+  @endcode
+  */
+  template <InputIteratorLike B, InputIteratorLike E, typename G, PartitionerLike P= DefaultPartitioner>
+  Task generate(B first, E last, G gen, P part = P());
+
+  /**
+  @brief generates N values into a range in parallel using a callable
+
+  @tparam B iterator type (satisfying tf::InputIteratorLike)
+  @tparam C count type (integral)
+  @tparam G generator callable type
+  @tparam P type satisfying tf::PartitionerLike
+
+  @param first iterator to the beginning of the range (inclusive)
+  @param count number of elements to generate
+  @param gen generator callable that produces values
+  @param part partitioning algorithm (default tf::DefaultPartitioner)
+
+  @return a tf::Task handle
+
+  The task spawns asynchronous tasks to generate and fill N elements 
+  starting from @c first with values produced by calling the 
+  generator @c gen in parallel.
+  This is equivalent to calling <tt>std::generate_n(first, count, gen)</tt>
+  but in parallel.
+
+  @code{.cpp}
+  std::vector<int> vec(1000);
+  tf::Task task = taskflow.generate_n(vec.begin(), 500, 
+                                      [&counter]() { return 42; });
+  @endcode
+  */
+  template <InputIteratorLike B, std::integral C, typename G, PartitionerLike P = DefaultPartitioner>
+  Task generate_n(B first, C count, G gen, P part = P());
+
+  protected:
+  
+  /**
+  @private
+  */
+  Graph& _graph;
+
   private:
 
-    Graph& _graph;
-
-    template <typename L>
-    void _linearize(L&);
+  template <typename L>
+  void _linearize(L&);
 };
 
 // Constructor
@@ -353,412 +1777,115 @@ inline FlowBuilder::FlowBuilder(Graph& graph) :
 }
 
 // Function: emplace
-template <typename... C, std::enable_if_t<(sizeof...(C)>1), void>*>
-auto FlowBuilder::emplace(C&&... cs) {
-  return std::make_tuple(emplace(std::forward<C>(cs))...);
+template <StaticTaskLike C>
+Task FlowBuilder::emplace(C&& c) {
+  return Task(_graph._emplace_back(NSTATE::NONE, ESTATE::NONE, DefaultTaskParams{}, nullptr, nullptr, 0,
+    std::in_place_type_t<Node::Static>{}, std::forward<C>(c)
+  ));
 }
 
 // Function: emplace
-// emplaces a static task
-template <typename C>
-std::enable_if_t<is_static_task_v<C>, Task> FlowBuilder::emplace(C&& c) {
-  auto n = _graph.emplace_back(
-    nstd::in_place_type_t<Node::StaticWork>{}, std::forward<C>(c)
-  );
-  return Task(n);
+template <RuntimeTaskLike C>
+Task FlowBuilder::emplace(C&& c) {
+  if constexpr (std::is_invocable_v<C, tf::Runtime&>) {
+    return Task(_graph._emplace_back(NSTATE::NONE, ESTATE::NONE, DefaultTaskParams{}, nullptr, nullptr, 0,
+      std::in_place_type_t<Node::Runtime>{}, std::forward<C>(c)
+    ));
+  }
+  else if constexpr (std::is_invocable_v<C, tf::NonpreemptiveRuntime&>) {
+    return Task(_graph._emplace_back(NSTATE::NONE, ESTATE::NONE, DefaultTaskParams{}, nullptr, nullptr, 0,
+      std::in_place_type_t<Node::NonpreemptiveRuntime>{}, std::forward<C>(c)
+    ));
+  }
+  else {
+    static_assert(dependent_false_v<C>, "invalid runtime task callable");
+  }
 }
 
 // Function: emplace
-// emplaces a dynamic task
-template <typename C>
-std::enable_if_t<is_dynamic_task_v<C>, Task> FlowBuilder::emplace(C&& c) {
-  auto n = _graph.emplace_back(
-    nstd::in_place_type_t<Node::DynamicWork>{}, std::forward<C>(c)
-  );
-  return Task(n);
+template <SubflowTaskLike C>
+Task FlowBuilder::emplace(C&& c) {
+  return Task(_graph._emplace_back(NSTATE::NONE, ESTATE::NONE, DefaultTaskParams{}, nullptr, nullptr, 0,
+    std::in_place_type_t<Node::Subflow>{}, std::forward<C>(c)
+  ));
 }
 
-// Function: emplace 
-// emplaces a condition task
-template <typename C>
-std::enable_if_t<is_condition_task_v<C>, Task> FlowBuilder::emplace(C&& c) {
-  auto n = _graph.emplace_back(
-    nstd::in_place_type_t<Node::ConditionWork>{}, std::forward<C>(c)
-  );
-  return Task(n);
-}
-
-#ifdef TF_ENABLE_CUDA
 // Function: emplace
-// emplaces a cudaflow task
-template <typename C>
-std::enable_if_t<is_cudaflow_task_v<C>, Task> FlowBuilder::emplace(C&& c) {
-  auto n = _graph.emplace_back(
-    nstd::in_place_type_t<Node::cudaFlowWork>{}, std::forward<C>(c)
-  );
-  return Task(n);
-}
-#endif
-
-// Function: composed_of    
-inline Task FlowBuilder::composed_of(Taskflow& taskflow) {
-  auto node = _graph.emplace_back(
-    nstd::in_place_type_t<Node::ModuleWork>{}, &taskflow
-  );
-  return Task(node);
+template <ConditionTaskLike C>
+Task FlowBuilder::emplace(C&& c) {
+  return Task(_graph._emplace_back(NSTATE::NONE, ESTATE::NONE, DefaultTaskParams{}, nullptr, nullptr, 0,
+    std::in_place_type_t<Node::Condition>{}, std::forward<C>(c)
+  ));
 }
 
-// Procedure: precede
-inline void FlowBuilder::precede(Task from, Task to) {
-  from._node->_precede(to._node);
+// Function: emplace
+template <MultiConditionTaskLike C>
+Task FlowBuilder::emplace(C&& c) {
+  return Task(_graph._emplace_back(NSTATE::NONE, ESTATE::NONE, DefaultTaskParams{}, nullptr, nullptr, 0,
+    std::in_place_type_t<Node::MultiCondition>{}, std::forward<C>(c)
+  ));
 }
 
-// Procedure: broadcast
-inline void FlowBuilder::broadcast(Task from, std::vector<Task>& tos) {
-  for(auto to : tos) {
-    from.precede(to);
-  }
+// Function: composed_of
+template <GraphLike T>
+Task FlowBuilder::composed_of(T& target) {
+  return Task(_graph._emplace_back(NSTATE::NONE, ESTATE::NONE, DefaultTaskParams{}, nullptr, nullptr, 0,
+    std::in_place_type_t<Node::Module>{}, retrieve_graph(target)
+  ));
 }
 
-// Procedure: broadcast
-inline void FlowBuilder::broadcast(Task from, std::initializer_list<Task> tos) {
-  for(auto to : tos) {
-    from.precede(to);
-  }
+// Function: adopt
+inline Task FlowBuilder::adopt(Graph&& graph) {
+  return Task(_graph._emplace_back(NSTATE::NONE, ESTATE::NONE, DefaultTaskParams{}, nullptr, nullptr, 0,
+    std::in_place_type_t<Node::AdoptedModule>{}, std::move(graph)
+  ));
 }
 
-// Function: succeed
-inline void FlowBuilder::succeed(std::vector<Task>& froms, Task to) {
-  for(auto from : froms) {
-    to.succeed(from);
-  }
+// Function: emplace (convenience overload of composed_of)
+template <GraphLike T>
+Task FlowBuilder::emplace(T& object) {
+  return composed_of(object);
 }
 
-// Function: succeed
-inline void FlowBuilder::succeed(std::initializer_list<Task> froms, Task to) {
-  for(auto from : froms) {
-    to.succeed(from);
-  }
+// Function: emplace (convenience overload of adopt)
+inline Task FlowBuilder::emplace(Graph&& graph) {
+  return adopt(std::move(graph));
 }
 
 // Function: placeholder
 inline Task FlowBuilder::placeholder() {
-  auto node = _graph.emplace_back();
+  auto node = _graph._emplace_back(NSTATE::NONE, ESTATE::NONE, DefaultTaskParams{}, nullptr, nullptr, 0,
+    std::in_place_type_t<Node::Placeholder>{}
+  );
   return Task(node);
 }
 
-// Function: parallel_for
-template <typename I, typename C>
-std::pair<Task, Task> FlowBuilder::parallel_for(
-  I beg, I end, C&& c, size_t chunk
-){
-  
-  //using category = typename std::iterator_traits<I>::iterator_category;
-  
-  auto S = placeholder();
-  auto T = placeholder();
-  
-  // default partition equals to the worker count
-  if(chunk == 0) {
-    chunk = 1;
-  }
-
-  size_t remain = std::distance(beg, end);
-
-  while(beg != end) {
-
-    auto e = beg;
-    
-    auto x = std::min(remain, chunk);
-    std::advance(e, x);
-    remain -= x;
-      
-    // Create a task
-    auto task = emplace([beg, e, c] () mutable {
-      std::for_each(beg, e, c);
-    });
-
-    S.precede(task);
-    task.precede(T);
-
-    // adjust the pointer
-    beg = e;
-  }
-  
-  // special case
-  if(S.num_successors() == 0) {
-    S.precede(T);
-  }
-  
-  return std::make_pair(S, T); 
+// Function: emplace
+template <typename... C> requires (sizeof...(C) > 1)
+auto FlowBuilder::emplace(C&&... cs) {
+  return std::make_tuple(emplace(std::forward<C>(cs))...);
 }
 
-// Function: parallel_for
-template <
-  typename I, 
-  typename C, 
-  std::enable_if_t<std::is_integral<std::decay_t<I>>::value, void>*
->
-std::pair<Task, Task> FlowBuilder::parallel_for(I beg, I end, I s, C&& c, size_t chunk) {
-  
-  if((s == 0) || (beg < end && s <= 0) || (beg > end && s >=0) ) {
-    TF_THROW("invalid range [", beg, ", ", end, ") with step size ", s);
+// Function: erase
+inline void FlowBuilder::erase(Task task) {
+
+  if (!task._node) {
+    return;
   }
 
-  // source and target 
-  auto source = placeholder();
-  auto target = placeholder();
-  
-  if(chunk == 0) {
-    chunk = 1;
+  // remove task from its successors' predecessor list
+  for(size_t i=0; i<task._node->_num_successors; ++i) {
+    task._node->_edges[i]->_remove_predecessors(task._node);
   }
 
-  // positive case
-  if(beg < end) {
-    while(beg != end) {
-      auto o = static_cast<I>(chunk) * s;
-      auto e = std::min(beg + o, end);
-      auto task = emplace([=] () mutable {
-        for(auto i=beg; i<e; i+=s) {
-          c(i);
-        }
-      });
-      source.precede(task);
-      task.precede(target);
-      beg = e;
-    }
-  }
-  // negative case
-  else if(beg > end) {
-    while(beg != end) {
-      auto o = static_cast<I>(chunk) * s;
-      auto e = std::max(beg + o, end);
-      auto task = emplace([=] () mutable {
-        for(auto i=beg; i>e; i+=s) {
-          c(i);
-        }
-      });
-      source.precede(task);
-      task.precede(target);
-      beg = e;
-    }
+  // remove task from its precedessors' successor list
+  for(size_t i=task._node->_num_successors; i<task._node->_edges.size(); ++i) {
+    task._node->_edges[i]->_remove_successors(task._node);
   }
 
-  if(source.num_successors() == 0) {
-    source.precede(target);
-  }
-    
-  return std::make_pair(source, target);
+  _graph._erase(task._node);
 }
 
-// Function: parallel_for
-template <typename I, typename C, 
-  std::enable_if_t<std::is_floating_point<std::decay_t<I>>::value, void>*
->
-std::pair<Task, Task> FlowBuilder::parallel_for(I beg, I end, I s, C&& c, size_t chunk) {
-  
-  if((s == 0) || (beg < end && s <= 0) || (beg > end && s >=0) ) {
-    TF_THROW("invalid range [", beg, ", ", end, ") with step size ", s);
-  }
-
-  // source and target 
-  auto source = placeholder();
-  auto target = placeholder();
-  
-  if(chunk == 0) {
-    chunk = 1;
-  }
-
-  // positive case
-  if(beg < end) {
-    size_t N=0;
-    I b = beg;
-    for(I e=beg; e<end; e+=s) {
-      if(++N == chunk) {
-        auto task = emplace([=] () mutable {
-          for(size_t i=0; i<N; ++i, b+=s) {
-            c(b);
-          }
-        });
-        source.precede(task);
-        task.precede(target);
-        N = 0;
-        b = e;
-      }
-    }
-
-    if(N) {
-      auto task = emplace([=] () mutable {
-        for(size_t i=0; i<N; ++i, b+=s) {
-          c(b);
-        }
-      });
-      source.precede(task);
-      task.precede(target);
-    }
-  }
-  else if(beg > end) {
-    size_t N=0;
-    I b = beg;
-    for(I e=beg; e>end; e+=s) {
-      if(++N == chunk) {
-        auto task = emplace([=] () mutable {
-          for(size_t i=0; i<N; ++i, b+=s) {
-            c(b);
-          }
-        });
-        source.precede(task);
-        task.precede(target);
-        N = 0;
-        b = e;
-      }
-    }
-
-    if(N) {
-      auto task = emplace([=] () mutable {
-        for(size_t i=0; i<N; ++i, b+=s) {
-          c(b);
-        }
-      });
-      source.precede(task);
-      task.precede(target);
-    }
-  }
-
-  if(source.num_successors() == 0) {
-    source.precede(target);
-  }
-    
-  return std::make_pair(source, target);
-}
-
-// Function: reduce_min
-// Find the minimum element over a range of items.
-template <typename I, typename T>
-std::pair<Task, Task> FlowBuilder::reduce_min(I beg, I end, T& result) {
-  return reduce(beg, end, result, [] (const auto& l, const auto& r) {
-    return std::min(l, r);
-  });
-}
-
-// Function: reduce_max
-// Find the maximum element over a range of items.
-template <typename I, typename T>
-std::pair<Task, Task> FlowBuilder::reduce_max(I beg, I end, T& result) {
-  return reduce(beg, end, result, [] (const auto& l, const auto& r) {
-    return std::max(l, r);
-  });
-}
-
-// Function: transform_reduce    
-template <typename I, typename T, typename B, typename U>
-std::pair<Task, Task> FlowBuilder::transform_reduce(
-  I beg, I end, T& result, B&& bop, U&& uop
-) {
-
-  //using category = typename std::iterator_traits<I>::iterator_category;
-  
-  // Even partition
-  size_t d = std::distance(beg, end);
-  size_t w = std::max(unsigned{1}, std::thread::hardware_concurrency());
-  size_t g = std::max((d + w - 1) / w, size_t{2});
-
-  auto source = placeholder();
-  auto target = placeholder();
-
-  //std::vector<std::future<T>> futures;
-  auto g_results = std::make_unique<T[]>(w);
-  size_t id {0};
-
-  size_t remain = d;
-
-  while(beg != end) {
-
-    auto e = beg;
-    
-    size_t x = std::min(remain, g);
-    std::advance(e, x);
-    remain -= x;
-
-    // Create a task 
-    auto task = emplace([beg, e, bop, uop, res=&(g_results[id])] () mutable {
-      *res = uop(*beg);
-      for(++beg; beg != e; ++beg) {
-        *res = bop(std::move(*res), uop(*beg));          
-      }
-    });
-
-    source.precede(task);
-    task.precede(target);
-
-    // adjust the pointer
-    beg = e;
-    id ++;
-  }
-
-  // target synchronizer 
-  target.work([&result, bop, res=make_moc(std::move(g_results)), w=id] () {
-    for(auto i=0u; i<w; i++) {
-      result = bop(std::move(result), res.object[i]);
-    }
-  });
-
-  return std::make_pair(source, target); 
-}
-
-// Function: transform_reduce    
-template <typename I, typename T, typename B, typename P, typename U>
-std::pair<Task, Task> FlowBuilder::transform_reduce(
-  I beg, I end, T& result, B&& bop, P&& pop, U&& uop
-) {
-
-  //using category = typename std::iterator_traits<I>::iterator_category;
-  
-  // Even partition
-  size_t d = std::distance(beg, end);
-  size_t w = std::max(unsigned{1}, std::thread::hardware_concurrency());
-  size_t g = std::max((d + w - 1) / w, size_t{2});
-
-  auto source = placeholder();
-  auto target = placeholder();
-
-  auto g_results = std::make_unique<T[]>(w);
-
-  size_t id {0};
-  size_t remain = d;
-
-  while(beg != end) {
-
-    auto e = beg;
-    
-    size_t x = std::min(remain, g);
-    std::advance(e, x);
-    remain -= x;
-      
-    // Create a task 
-    auto task = emplace([beg, e, uop, pop,  res= &g_results[id]] () mutable {
-      *res = uop(*beg);
-      for(++beg; beg != e; ++beg) {
-        *res = pop(std::move(*res), *beg);
-      }
-    });
-    source.precede(task);
-    task.precede(target);
-
-    // adjust the pointer
-    beg = e;
-    id ++;
-  }
-
-  // target synchronizer 
-  target.work([&result, bop, g_results=make_moc(std::move(g_results)), w=id] () {
-    for(auto i=0u; i<w; i++) {
-      result = bop(std::move(result), std::move(g_results.object[i]));
-    }
-  });
-
-  return std::make_pair(source, target); 
-}
 
 // Procedure: _linearize
 template <typename L>
@@ -780,7 +1907,7 @@ void FlowBuilder::_linearize(L& keys) {
 
 // Procedure: linearize
 inline void FlowBuilder::linearize(std::vector<Task>& keys) {
-  _linearize(keys); 
+  _linearize(keys);
 }
 
 // Procedure: linearize
@@ -788,147 +1915,169 @@ inline void FlowBuilder::linearize(std::initializer_list<Task> keys) {
   _linearize(keys);
 }
 
-// Proceduer: reduce
-template <typename I, typename T, typename B>
-std::pair<Task, Task> FlowBuilder::reduce(I beg, I end, T& result, B&& op) {
-  
-  //using category = typename std::iterator_traits<I>::iterator_category;
-  
-  size_t d = std::distance(beg, end);
-  size_t w = std::max(unsigned{1}, std::thread::hardware_concurrency());
-  size_t g = std::max((d + w - 1) / w, size_t{2});
-
-  auto source = placeholder();
-  auto target = placeholder();
-
-  //T* g_results = static_cast<T*>(malloc(sizeof(T)*w));
-  auto g_results = std::make_unique<T[]>(w);
-  //std::vector<std::future<T>> futures;
-  
-  size_t id {0};
-  size_t remain = d;
-
-  while(beg != end) {
-
-    auto e = beg;
-    
-    size_t x = std::min(remain, g);
-    std::advance(e, x);
-    remain -= x;
-    
-    // Create a task
-    //auto [task, future] = emplace([beg, e, op] () mutable {
-    auto task = emplace([beg, e, op, res = &g_results[id]] () mutable {
-      *res = *beg;
-      for(++beg; beg != e; ++beg) {
-        *res = op(std::move(*res), *beg);          
-      }
-      //auto init = *beg;
-      //for(++beg; beg != e; ++beg) {
-      //  init = op(std::move(init), *beg);          
-      //}
-      //return init;
-    });
-    source.precede(task);
-    task.precede(target);
-    //futures.push_back(std::move(future));
-
-    // adjust the pointer
-    beg = e;
-    id ++;
-  }
-  
-  // target synchronizer
-  //target.work([&result, futures=MoC{std::move(futures)}, op] () {
-  //  for(auto& fu : futures.object) {
-  //    result = op(std::move(result), fu.get());
-  //  }
-  //});
-  target.work([g_results=make_moc(std::move(g_results)), &result, op, w=id] () {
-    for(auto i=0u; i<w; i++) {
-      result = op(std::move(result), g_results.object[i]);
-    }
-  });
-
-  return std::make_pair(source, target); 
-}
-
 // ----------------------------------------------------------------------------
 
-/** 
+/**
 @class Subflow
 
-@brief building methods of a subflow graph in dynamic tasking
+@brief class to construct a subflow graph from the execution of a dynamic task
 
-*/ 
+tf::Subflow is spawned from the execution of a task to dynamically manage a 
+child graph that may depend on runtime variables.
+You can explicitly join a subflow by calling tf::Subflow::join, respectively.
+By default, the %Taskflow runtime will implicitly join a subflow it is is joinable.
+
+The following example creates a taskflow graph that spawns a subflow from
+the execution of task @c B, and the subflow contains three tasks, @c B1,
+@c B2, and @c B3, where @c B3 runs after @c B1 and @c B2.
+
+@code{.cpp}
+// create three static tasks
+tf::Task A = taskflow.emplace([](){}).name("A");
+tf::Task C = taskflow.emplace([](){}).name("C");
+tf::Task D = taskflow.emplace([](){}).name("D");
+
+// create a subflow graph (dynamic tasking)
+tf::Task B = taskflow.emplace([] (tf::Subflow& subflow) {
+  tf::Task B1 = subflow.emplace([](){}).name("B1");
+  tf::Task B2 = subflow.emplace([](){}).name("B2");
+  tf::Task B3 = subflow.emplace([](){}).name("B3");
+  B1.precede(B3);
+  B2.precede(B3);
+}).name("B");
+
+A.precede(B);  // B runs after A
+A.precede(C);  // C runs after A
+B.precede(D);  // D runs after B
+C.precede(D);  // D runs after C
+@endcode
+
+*/
 class Subflow : public FlowBuilder {
+
+  friend class Executor;
+  friend class FlowBuilder;
 
   public:
     
-    /**
-    @brief constructs a subflow builder object
-    */
-    template <typename... Args>
-    Subflow(Args&&... args);
-    
-    /**
-    @brief enables the subflow to join its parent task
-    */
-    void join();
+  /**
+  @brief enables the subflow to join its parent task
 
-    /**
-    @brief enables the subflow to detach from its parent task
-    */
-    void detach();
-    
-    /**
-    @brief queries if the subflow will be detached from its parent task
-    */
-    bool detached() const;
+  Performs an immediate action to join the subflow. Once the subflow is joined,
+  it is considered finished and you may not modify the subflow anymore.
 
-    /**
-    @brief queries if the subflow will join its parent task
-    */
-    bool joined() const;
+  @code{.cpp}
+  taskflow.emplace([](tf::Subflow& sf){
+    sf.emplace([](){});
+    sf.join();  // join the subflow of one task
+  });
+  @endcode
+
+  Only the worker that spawns this subflow can join it.
+  */
+  void join();
+
+  /**
+  @brief queries if the subflow is joinable
+
+  This member function queries if the subflow is joinable.
+  When a subflow is joined, it becomes not joinable.
+
+  @code{.cpp}
+  taskflow.emplace([](tf::Subflow& sf){
+    sf.emplace([](){});
+    std::cout << sf.joinable() << '\n';  // true
+    sf.join();
+    std::cout << sf.joinable() << '\n';  // false
+  });
+  @endcode
+  */
+  bool joinable() const noexcept;
+
+  /**
+  @brief acquires the associated executor
+  */
+  Executor& executor() noexcept;
+  
+  /**
+  @brief acquires the associated graph
+  */
+  Graph& graph() { return _graph; }
+  
+  /**
+  @brief specifies whether to keep the subflow after it is joined
+
+  @param flag `true` to retain the subflow after it is joined; `false` to discard it
+
+  By default, the runtime automatically clears a spawned subflow once it is joined.
+  Setting this flag to `true` allows the application to retain the subflow's structure 
+  for post-execution analysis like visualization.
+  */
+  void retain(bool flag) noexcept;
+
+  /**
+  @brief queries if the subflow will be retained after it is joined
+  @return `true` if the subflow will be retained after it is joined; `false` otherwise
+
+  By default, the runtime automatically clears a spawned subflow once it is joined.
+  Users can disable this before by explicitly calling tf::Subflow::retain.
+  */
+  bool retain() const;
 
   private:
+    
+  Subflow(Executor&, Worker&, Node*, Graph&);
+  
+  Subflow() = delete;
+  Subflow(const Subflow&) = delete;
+  Subflow(Subflow&&) = delete;
 
-    bool _detached {false};
+  Executor& _executor;
+  Worker& _worker;
+  Node* _node;
 };
 
 // Constructor
-template <typename... Args>
-Subflow::Subflow(Args&&... args) :
-  FlowBuilder {std::forward<Args>(args)...} {
+inline Subflow::Subflow(Executor& executor, Worker& worker, Node* node, Graph& graph) :
+  FlowBuilder {graph}, 
+  _executor   {executor}, 
+  _worker     {worker}, 
+  _node       {node} {
+  
+  // need to reset since there could have iterative control flow
+  _node->_nstate &= ~(NSTATE::JOINED_SUBFLOW | NSTATE::RETAIN_SUBFLOW);
+
+  // clear the graph
+  graph.clear();
 }
 
-// Procedure: join
-inline void Subflow::join() {
-  _detached = false;
+// Function: joinable
+inline bool Subflow::joinable() const noexcept {
+  return !(_node->_nstate & NSTATE::JOINED_SUBFLOW);
 }
 
-// Procedure: detach
-inline void Subflow::detach() {
-  _detached = true;
+// Function: executor
+inline Executor& Subflow::executor() noexcept {
+  return _executor;
 }
 
-// Function: detached
-inline bool Subflow::detached() const {
-  return _detached;
+// Function: retain
+inline void Subflow::retain(bool flag) noexcept {
+  // default value is not to retain 
+  if(flag == true) {
+    _node->_nstate |= NSTATE::RETAIN_SUBFLOW;
+  }
+  else {
+    _node->_nstate &= ~NSTATE::RETAIN_SUBFLOW;
+  }
+
+  //_node->_nstate = (_node->_nstate & ~NSTATE::RETAIN_SUBFLOW) | 
+  //                 (-static_cast<int>(flag) & NSTATE::RETAIN_SUBFLOW);
 }
 
-// Function: joined
-inline bool Subflow::joined() const {
-  return !_detached;
+// Function: retain
+inline bool Subflow::retain() const {
+  return _node->_nstate & NSTATE::RETAIN_SUBFLOW;
 }
-
-
-// ----------------------------------------------------------------------------
-// Legacy code
-// ----------------------------------------------------------------------------
-
-using SubflowBuilder = Subflow;
 
 }  // end of namespace tf. ---------------------------------------------------
-
-

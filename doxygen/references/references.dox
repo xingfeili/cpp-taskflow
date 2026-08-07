@@ -2,21 +2,22 @@ namespace tf {
 
 /** @page References References
   
-  This page summarizes a list of publication related to Cpp-Taskflow. 
-  Please cite the article(s) accordingly.
-  
-  @section RefJournal Journal
+  This page summarizes a list of publication related to %Taskflow. 
+If you are using %Taskflow, please cite the following paper we published at 2022 IEEE Transactions on Parallel and Distributed Systems (TPDS):
+
++ Tsung-Wei Huang, Dian-Lun Lin, Chun-Xun Lin, and Yibo Lin, &quot;[Taskflow: A Lightweight Parallel and Heterogeneous Task Graph Computing System](https://tsung-wei-huang.github.io/papers/tpds21-taskflow.pdf),&quot; <i>IEEE Transactions on Parallel and Distributed Systems (TPDS)</i>, vol. 33, no. 6, pp. 1303-1320, June 2022
+
+
+  @section RefRecognition Recognition
 
   <ol>
-    <li>Tsung-Wei Huang, Dian-Lun Lin, Yibo Lin, and Chun-Xun Lin, &quot;[Cpp-Taskflow v2: A General-purpose Parallel and Heterogeneous Task Programming System at Scale](2004.10908v2.pdf),&quot;	<em>Computing Research Repository (CoRR)</em>, arXiv:2004.10908, 2020</li>
-  </ol>
-  
-  @section RefConference Conference
-
-  <ol>
-    <li>Tsung-Wei Huang, Chun-Xun Lin, Guannan Guo, and Martin Wong, &quot;[Cpp-Taskflow: Fast Task-based Parallel Programming using Modern C++](ipdps19.pdf),&quot; <i>IEEE International Parallel and Distributed Processing Symposium (IPDPS)</i>, pp. 974-983, Rio de Janeiro, Brazil, 2019.</li>
-    <li>Chun-Xun Lin, Tsung-Wei Huang, Guannan Guo, and Martin Wong, &quot;[A Modern C++ Parallel Task Programming Library](mm19.pdf),&quot; <i>ACM Multimedia Conference (MM)</i>, pp. 2284-2287, Nice, France, 2019.</li>
-    <li>Chun-Xun Lin, Tsung-Wei Huang, Guannan Guo, and Martin Wong, &quot;[An Efficient and Composable Parallel Task Programming Library](hpec19.pdf),&quot; <i>IEEE High-performance and Extreme Computing Conference (HPEC)</i>, pp. 1-7, Waltham, MA, 2019.</li>
+    <li>Best Poste Award at the 2025 C++ Conference</li>
+    <li>Second Place of Fast Code Programming Challenge at the 2025 ACM PPoPP</li>
+    <li>Innovation Award of the 2023 IEEE HPEC/MIT/Amazon Stochastic Block Partition Challenge</li>
+    <li>Champion of %Graph Challenge at the 2020 IEEE High-performance Extreme Computing Conference</li>
+    <li>Second Prize of Open-Source Software Competition at the 2019 ACM Multimedia Conference</li>
+    <li>ACM SIGDA Outstanding PhD Dissertation Award at the 2019 ACM/IEEE Design Automation Conference</li>
+    <li>Best Poster Award at the 2018 Official C++ Conference, voted by hundreds of C++ professionals</li>
   </ol>
 
 */
